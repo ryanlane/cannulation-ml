@@ -151,6 +151,7 @@ async def run_detail(request: Request, run_id: str):
         "static_tsne": static_tsne,
         "has_embeddings": has_embeddings,
         "epoch_rows": epoch_rows,
+        "emb_metrics": data.get("embedding_metrics"),
     })
 
 

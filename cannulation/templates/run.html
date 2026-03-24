@@ -107,6 +107,100 @@
   </table>
 </div>
 
+<!-- Embedding Quality Metrics -->
+{% if emb_metrics %}
+<div class="card" style="margin-bottom:1rem;">
+  <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:1rem;">Embedding Quality</div>
+  <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; margin-bottom:1rem;">
+
+    <div style="background:var(--bg); border-radius:6px; padding:0.9rem 1rem;">
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.25rem;">Silhouette Score</div>
+      <div style="font-size:1.3rem; font-weight:700; color:
+        {% if emb_metrics.silhouette >= 0.45 %}var(--ok)
+        {% elif emb_metrics.silhouette >= 0.25 %}var(--warning)
+        {% else %}var(--critical){% endif %};">
+        {{ "%.3f"|format(emb_metrics.silhouette) }}
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.2rem;">
+        {% if emb_metrics.silhouette >= 0.45 %}Strong class separation
+        {% elif emb_metrics.silhouette >= 0.25 %}Moderate separation
+        {% else %}Poor separation — classes overlapping{% endif %}
+      </div>
+    </div>
+
+    <div style="background:var(--bg); border-radius:6px; padding:0.9rem 1rem;">
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.25rem;">Separation Ratio</div>
+      <div style="font-size:1.3rem; font-weight:700; color:
+        {% if emb_metrics.separation_ratio >= 2.5 %}var(--ok)
+        {% elif emb_metrics.separation_ratio >= 1.5 %}var(--warning)
+        {% else %}var(--critical){% endif %};">
+        {{ "%.2f"|format(emb_metrics.separation_ratio) }}×
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.2rem;">
+        inter-class dist / intra-class dist
+      </div>
+    </div>
+
+    <div style="background:var(--bg); border-radius:6px; padding:0.9rem 1rem;">
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.25rem;">Intrinsic Dimensionality</div>
+      <div style="font-size:1.3rem; font-weight:700;">
+        {{ emb_metrics.dims_for_90pct_var }}
+        <span style="font-size:0.85rem; font-weight:400; color:var(--muted);">/ {{ emb_metrics.embedding_dim }}</span>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.2rem;">
+        dims to explain 90% variance &nbsp;·&nbsp; {{ emb_metrics.dims_for_99pct_var }} for 99%
+      </div>
+    </div>
+
+  </div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+
+    <!-- Per-class compactness -->
+    <div>
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.5rem;">Per-class intra-cluster distance <span style="font-style:italic;">(lower = tighter)</span></div>
+      {% set max_intra = emb_metrics.intra_class_by_class.values()|list|max %}
+      {% for cls, dist in emb_metrics.intra_class_by_class.items()|sort(attribute='1', reverse=true) %}
+      <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.3rem; font-size:0.8rem;">
+        <span style="width:1.5rem; text-align:right; color:var(--muted);">{{ cls }}</span>
+        <div style="flex:1; background:var(--border); border-radius:2px; height:8px; overflow:hidden;">
+          <div style="width:{{ (dist / max_intra * 100)|round }}%; height:100%;
+            background:{% if dist == max_intra %}var(--critical){% else %}var(--accent){% endif %};
+            opacity:0.7; border-radius:2px;"></div>
+        </div>
+        <span style="width:3.5rem; color:var(--muted);">{{ "%.3f"|format(dist) }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Summary stats -->
+    <div style="display:flex; flex-direction:column; gap:0.5rem; font-size:0.85rem;">
+      <div style="display:flex; justify-content:space-between; padding:0.4rem 0; border-bottom:1px solid var(--border);">
+        <span style="color:var(--muted);">Hardest class pair</span>
+        <strong>{{ emb_metrics.worst_separated_pair[0] }} vs {{ emb_metrics.worst_separated_pair[1] }}</strong>
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:0.4rem 0; border-bottom:1px solid var(--border);">
+        <span style="color:var(--muted);">Davies-Bouldin index</span>
+        <strong>{{ "%.3f"|format(emb_metrics.davies_bouldin) }}</strong>
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:0.4rem 0; border-bottom:1px solid var(--border);">
+        <span style="color:var(--muted);">Calinski-Harabasz</span>
+        <strong>{{ "%.1f"|format(emb_metrics.calinski_harabasz) }}</strong>
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:0.4rem 0; border-bottom:1px solid var(--border);">
+        <span style="color:var(--muted);">Top-10 dims variance</span>
+        <strong>{{ "%.1f%%"|format(emb_metrics.var_explained_top10 * 100) }}</strong>
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:0.4rem 0;">
+        <span style="color:var(--muted);">Mean inter-class dist</span>
+        <strong>{{ "%.3f"|format(emb_metrics.mean_inter_class_dist) }}</strong>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endif %}
+
 <!-- Static plots (all except t-SNE) -->
 {% if plots %}
 <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Visualizations</div>

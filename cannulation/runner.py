@@ -9,6 +9,7 @@ from .model import CannulationCNN
 from .hooks import HookEngine
 from .trainer import Trainer
 from .analyzer import Analyzer
+from .embedding_metrics import compute_metrics
 from .visualizer import Visualizer
 from .tuner import Tuner
 
@@ -45,10 +46,22 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     metrics = trainer.train(config["epochs"])
     elapsed = time.time() - t0
 
-    # Analyze
     analyzer = Analyzer()
+    tuner = Tuner(EXPERIMENTS_DIR)
     final_telemetry = metrics["epoch_telemetry"][-1]
-    findings = analyzer.analyze(metrics, final_telemetry)
+
+    # Extract embeddings before analysis so metrics can inform findings
+    print("\n  Extracting embeddings...")
+    raw_emb, raw_labels = trainer.get_embeddings()
+    emb_path = os.path.join(EXPERIMENTS_DIR, f"{run_id}_embeddings.json")
+    with open(emb_path, "w") as fh:
+        json.dump({"embeddings": raw_emb.tolist(), "labels": raw_labels.tolist()}, fh)
+
+    print("  Computing embedding metrics...")
+    emb_metrics = compute_metrics(raw_emb, raw_labels)
+
+    findings = analyzer.analyze(metrics, final_telemetry, emb_metrics)
+    next_config = tuner.suggest(findings, config)
 
     if findings:
         print("\n  Analyzer findings:")
@@ -57,16 +70,12 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     else:
         print("\n  Analyzer: no issues detected.")
 
-    # Suggest next config
-    tuner = Tuner(EXPERIMENTS_DIR)
-    next_config = tuner.suggest(findings, config)
-
-    # Persist experiment record
     os.makedirs(EXPERIMENTS_DIR, exist_ok=True)
     record = {
         "run_id": run_id,
         "config": config,
         "metrics": {k: v for k, v in metrics.items() if k != "epoch_telemetry"},
+        "embedding_metrics": emb_metrics,
         "findings": [f.to_dict() for f in findings],
         "next_config": next_config,
         "elapsed_seconds": round(elapsed, 2),
@@ -75,15 +84,8 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     with open(record_path, "w") as fh:
         json.dump(record, fh, indent=2)
 
-    # Extract embeddings once — used for static PNG and saved for interactive viz
-    print("\n  Extracting embeddings...")
-    raw_emb, raw_labels = trainer.get_embeddings()
-    emb_path = os.path.join(EXPERIMENTS_DIR, f"{run_id}_embeddings.json")
-    with open(emb_path, "w") as fh:
-        json.dump({"embeddings": raw_emb.tolist(), "labels": raw_labels.tolist()}, fh)
-
     # Visualize
-    print("  Generating plots...")
+    print("\n  Generating plots...")
     viz = Visualizer(PLOTS_DIR)
     plot_paths = viz.plot_all(run_id, metrics, trainer.model, raw_emb, raw_labels)
     print(f"  Saved: {', '.join(os.path.basename(p) for p in plot_paths)}")

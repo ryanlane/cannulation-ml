@@ -30,6 +30,15 @@ class Tuner:
                 next_cfg["dropout"] = min(round(next_cfg["dropout"] + 0.1, 2), 0.7)
             elif "Slow convergence" in issue:
                 next_cfg["lr"] = min(next_cfg["lr"] * 1.3, 0.01)
+            elif "Poor class separation" in issue or "Classes overlapping" in issue:
+                # Boost representational capacity
+                next_cfg["conv_channels"] = [min(c + 16, 128) for c in next_cfg["conv_channels"]]
+                next_cfg["fc_size"] = min(next_cfg["fc_size"] + 64, 512)
+            elif "over-parameterized" in issue:
+                # Shrink towards efficiency — cut fc, keep conv
+                next_cfg["fc_size"] = max(next_cfg["fc_size"] - 32, 64)
+            elif "fc_size may be too small" in issue:
+                next_cfg["fc_size"] = min(next_cfg["fc_size"] * 2, 512)
 
         return next_cfg
 

@@ -22,7 +22,14 @@ class Analyzer:
     DEAD_NEURON_THRESHOLD = 0.5
     OVERFIT_GAP = 0.05
 
-    def analyze(self, metrics: Dict, telemetry: Dict) -> List[Finding]:
+    # Embedding quality thresholds
+    SILHOUETTE_POOR = 0.25
+    SEPARATION_POOR = 1.5
+    INTRINSIC_DIM_LOW = 0.10   # fraction of embedding_dim — below this is over-parameterized
+    INTRINSIC_DIM_HIGH = 0.70  # fraction of embedding_dim — above this, fc layer too small
+
+    def analyze(self, metrics: Dict, telemetry: Dict,
+                emb_metrics: Dict = None) -> List[Finding]:
         findings = []
 
         for layer, data in telemetry.items():
@@ -70,6 +77,51 @@ class Analyzer:
                     "warning", "training",
                     f"Overfitting (train-val gap={gap:.3f})",
                     "Increase dropout or reduce model capacity",
+                ))
+
+        # Embedding quality checks
+        if emb_metrics:
+            sil = emb_metrics["silhouette"]
+            sep = emb_metrics["separation_ratio"]
+            dims_90 = emb_metrics["dims_for_90pct_var"]
+            emb_dim = emb_metrics["embedding_dim"]
+            worst = emb_metrics["worst_separated_pair"]
+
+            if sil < self.SILHOUETTE_POOR:
+                findings.append(Finding(
+                    "warning", "embeddings",
+                    f"Poor class separation in representation space (silhouette={sil:.3f})",
+                    "Increase fc_size or conv_channels to give the model more representational capacity",
+                ))
+            elif sil < 0.45:
+                findings.append(Finding(
+                    "info", "embeddings",
+                    f"Moderate class separation (silhouette={sil:.3f})",
+                    "Model is learning reasonable representations but has room to improve",
+                ))
+
+            if sep < self.SEPARATION_POOR:
+                findings.append(Finding(
+                    "warning", "embeddings",
+                    f"Classes overlapping in embedding space (separation ratio={sep:.2f})",
+                    f"Classes {worst[0]} and {worst[1]} are hardest to separate — "
+                    "consider larger conv layers or more training epochs",
+                ))
+
+            intrinsic_fraction = dims_90 / emb_dim
+            if intrinsic_fraction < self.INTRINSIC_DIM_LOW:
+                findings.append(Finding(
+                    "info", "embeddings",
+                    f"Low intrinsic dimensionality ({dims_90} dims explain 90% of variance "
+                    f"in {emb_dim}-dim space)",
+                    "Embedding layer is over-parameterized — reducing fc_size would cut "
+                    "compute with minimal accuracy loss",
+                ))
+            elif intrinsic_fraction > self.INTRINSIC_DIM_HIGH:
+                findings.append(Finding(
+                    "warning", "embeddings",
+                    f"High intrinsic dimensionality ({dims_90} of {emb_dim} dims needed for 90% variance)",
+                    "fc_size may be too small — the model is compressing too aggressively",
                 ))
 
         return findings
