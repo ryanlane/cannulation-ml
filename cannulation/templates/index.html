@@ -18,10 +18,33 @@
     <form id="run-form" onsubmit="submitRun(event)">
       <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:0.75rem; margin-bottom:1rem;">
 
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted); grid-column:span 2;">
+          Dataset Source
+          <input name="data_source" type="text"
+            value="{{ default_cfg.data_source or '' }}"
+            placeholder="mnist, /path/to/data.csv, /path/to/image-folder, or HF dataset name"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          Target Column
+          <input name="target_col" type="text"
+            value="{{ default_cfg.target_col or '' }}"
+            placeholder="Required for CSV/HF tabular"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
         <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
           Learning Rate
           <input name="lr" type="number" step="any" min="0.00001" max="0.1"
             value="{{ default_cfg.lr }}"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          Validation Split
+          <input name="val_split" type="number" step="0.05" min="0.05" max="0.45"
+            value="{{ default_cfg.val_split }}"
             style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
         </label>
 
@@ -207,6 +230,9 @@
       epochs:        parseInt(data.epochs),
       fc_size:       parseInt(data.fc_size),
       batch_size:    parseInt(data.batch_size),
+      data_source:   data.data_source.trim() || null,
+      target_col:    data.target_col.trim() || null,
+      val_split:     parseFloat(data.val_split),
       conv_channels: data.conv_channels.split(',').map(s => parseInt(s.trim())),
       iterate:       document.getElementById('iterate-cb').checked,
     };

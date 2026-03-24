@@ -4,7 +4,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -35,6 +35,15 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 active_runs: dict = {}
 
 
+def _load_chart_bundle(run_id: str) -> list:
+    path = EXPERIMENTS_DIR / f"{run_id}_charts.json"
+    if not path.exists():
+        return []
+    with open(path) as f:
+        payload = json.load(f)
+    return payload.get("charts", [])
+
+
 class LineLogger:
     """Redirects stdout writes into a list of log lines."""
     def __init__(self, log_list: list):
@@ -61,6 +70,9 @@ class RunConfig(BaseModel):
     lr: float = 0.001
     batch_size: int = 64
     epochs: int = 5
+    data_source: Optional[str] = None
+    target_col: Optional[str] = None
+    val_split: float = 0.2
     iterate: bool = False
 
 
@@ -105,10 +117,12 @@ async def index(request: Request):
     # Default config: last tuner suggestion or hardcoded defaults
     from .tuner import Tuner
     history = Tuner(EXPERIMENTS_DIR).load_history()
-    default_cfg = history[-1]["next_config"] if history else {
+    defaults = {
         "conv_channels": [32, 64], "fc_size": 128, "dropout": 0.3,
         "lr": 0.001, "batch_size": 64, "epochs": 5,
+        "data_source": None, "target_col": None, "val_split": 0.2,
     }
+    default_cfg = {**defaults, **history[-1]["next_config"]} if history else defaults
 
     return templates.TemplateResponse(request, "index.html", {
         "runs": runs,
@@ -127,12 +141,13 @@ async def run_detail(request: Request, run_id: str):
     with open(path) as f:
         data = json.load(f)
 
+    charts = _load_chart_bundle(run_id)
     all_plots = [
         {"slug": slug, "title": title, "url": f"/plots/{run_id}_{slug}.png"}
         for slug, title in PLOT_NAMES
         if (PLOTS_DIR / f"{run_id}_{slug}.png").exists()
     ]
-    plots = [p for p in all_plots if p["slug"] != "tsne"]
+    legacy_plots = [p for p in all_plots if p["slug"] != "tsne"]
     static_tsne = next((p for p in all_plots if p["slug"] == "tsne"), None)
     has_embeddings = (EXPERIMENTS_DIR / f"{run_id}_embeddings.json").exists()
 
@@ -147,7 +162,8 @@ async def run_detail(request: Request, run_id: str):
 
     return templates.TemplateResponse(request, "run.html", {
         "run": data,
-        "plots": plots,
+        "charts": charts,
+        "legacy_plots": legacy_plots,
         "static_tsne": static_tsne,
         "has_embeddings": has_embeddings,
         "epoch_rows": epoch_rows,
@@ -173,6 +189,11 @@ async def start_run(config: RunConfig):
         if history:
             cfg = dict(history[-1]["next_config"])
             cfg["epochs"] = config.epochs  # honour explicit epoch override
+            if config.data_source is not None:
+                cfg["data_source"] = config.data_source
+            if config.target_col is not None:
+                cfg["target_col"] = config.target_col
+            cfg["val_split"] = config.val_split
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     job = {"status": "running", "logs": [], "run_id": run_id}
@@ -242,9 +263,21 @@ async def default_config():
     from .tuner import Tuner
     history = Tuner(EXPERIMENTS_DIR).load_history()
     if history:
-        return history[-1]["next_config"]
+        return {
+            "conv_channels": [32, 64],
+            "fc_size": 128,
+            "dropout": 0.3,
+            "lr": 0.001,
+            "batch_size": 64,
+            "epochs": 5,
+            "data_source": None,
+            "target_col": None,
+            "val_split": 0.2,
+            **history[-1]["next_config"],
+        }
     return {"conv_channels": [32, 64], "fc_size": 128, "dropout": 0.3,
-            "lr": 0.001, "batch_size": 64, "epochs": 5}
+            "lr": 0.001, "batch_size": 64, "epochs": 5,
+            "data_source": None, "target_col": None, "val_split": 0.2}
 
 
 def start():

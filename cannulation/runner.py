@@ -5,8 +5,9 @@ import argparse
 from datetime import datetime
 from typing import Dict, Any
 
-from .model import CannulationCNN
+from .datasets import DatasetLoader
 from .hooks import HookEngine
+from .model import build_model
 from .trainer import Trainer
 from .analyzer import Analyzer
 from .embedding_metrics import compute_metrics
@@ -21,10 +22,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "lr": 0.001,
     "batch_size": 64,
     "epochs": 5,
+    "data_source": None,
+    "target_col": None,
+    "val_split": 0.2,
 }
 
 EXPERIMENTS_DIR = "experiments"
-PLOTS_DIR = "plots"
 
 
 def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
@@ -34,13 +37,18 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
           f"conv={config['conv_channels']}  fc={config['fc_size']}")
     print(f"{'='*60}")
 
-    model = CannulationCNN(
-        conv_channels=tuple(config["conv_channels"]),
-        fc_size=config["fc_size"],
-        dropout=config["dropout"],
+    dataset_loader = DatasetLoader()
+    train_loader, val_loader, dataset_info = dataset_loader.load(
+        source=config.get("data_source"),
+        target_col=config.get("target_col"),
+        val_split=config.get("val_split", 0.2),
+        batch_size=config["batch_size"],
     )
+    print(f"  data={dataset_info.source}  type={dataset_info.dataset_type}  task={dataset_info.task_type}")
+
+    model = build_model(config, dataset_info)
     hooks = HookEngine(model)
-    trainer = Trainer(model, config, hooks)
+    trainer = Trainer(model, config, hooks, train_loader, val_loader, dataset_info)
 
     t0 = time.time()
     metrics = trainer.train(config["epochs"])
@@ -49,16 +57,22 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     analyzer = Analyzer()
     tuner = Tuner(EXPERIMENTS_DIR)
     final_telemetry = metrics["epoch_telemetry"][-1]
+    os.makedirs(EXPERIMENTS_DIR, exist_ok=True)
 
     # Extract embeddings before analysis so metrics can inform findings
-    print("\n  Extracting embeddings...")
     raw_emb, raw_labels = trainer.get_embeddings()
-    emb_path = os.path.join(EXPERIMENTS_DIR, f"{run_id}_embeddings.json")
-    with open(emb_path, "w") as fh:
-        json.dump({"embeddings": raw_emb.tolist(), "labels": raw_labels.tolist()}, fh)
+    emb_metrics = None
+    if raw_emb is not None and raw_labels is not None and len(set(raw_labels.tolist())) > 1:
+        print("\n  Extracting embeddings...")
+        emb_path = os.path.join(EXPERIMENTS_DIR, f"{run_id}_embeddings.json")
+        with open(emb_path, "w") as fh:
+            json.dump({"embeddings": raw_emb.tolist(), "labels": raw_labels.tolist()}, fh)
 
-    print("  Computing embedding metrics...")
-    emb_metrics = compute_metrics(raw_emb, raw_labels)
+        print("  Computing embedding metrics...")
+        try:
+            emb_metrics = compute_metrics(raw_emb, raw_labels)
+        except ValueError as exc:
+            print(f"  Skipping embedding metrics: {exc}")
 
     findings = analyzer.analyze(metrics, final_telemetry, emb_metrics)
     next_config = tuner.suggest(findings, config)
@@ -70,10 +84,10 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     else:
         print("\n  Analyzer: no issues detected.")
 
-    os.makedirs(EXPERIMENTS_DIR, exist_ok=True)
     record = {
         "run_id": run_id,
         "config": config,
+        "dataset": dataset_info.to_dict(),
         "metrics": {k: v for k, v in metrics.items() if k != "epoch_telemetry"},
         "embedding_metrics": emb_metrics,
         "findings": [f.to_dict() for f in findings],
@@ -85,10 +99,10 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
         json.dump(record, fh, indent=2)
 
     # Visualize
-    print("\n  Generating plots...")
-    viz = Visualizer(PLOTS_DIR)
-    plot_paths = viz.plot_all(run_id, metrics, trainer.model, raw_emb, raw_labels)
-    print(f"  Saved: {', '.join(os.path.basename(p) for p in plot_paths)}")
+    print("\n  Building interactive charts...")
+    viz = Visualizer(EXPERIMENTS_DIR)
+    chart_path = viz.save_all(run_id, metrics, trainer.model)
+    print(f"  Saved: {os.path.basename(chart_path)}")
 
     hooks.remove()
 
@@ -109,6 +123,12 @@ def main():
                         help="How many sequential experiments to run")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Override epochs per run")
+    parser.add_argument("--data", dest="data_source", default=None,
+                        help="Dataset source: CSV path, image folder path, HF dataset name, or 'mnist'")
+    parser.add_argument("--target-col", default=None,
+                        help="Target column for CSV or HuggingFace tabular datasets")
+    parser.add_argument("--val-split", type=float, default=None,
+                        help="Validation split fraction for non-MNIST datasets")
     args = parser.parse_args()
 
     tuner = Tuner(EXPERIMENTS_DIR)
@@ -122,6 +142,12 @@ def main():
 
     if args.epochs is not None:
         config["epochs"] = args.epochs
+    if args.data_source is not None:
+        config["data_source"] = args.data_source
+    if args.target_col is not None:
+        config["target_col"] = args.target_col
+    if args.val_split is not None:
+        config["val_split"] = args.val_split
 
     for i in range(args.runs):
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")

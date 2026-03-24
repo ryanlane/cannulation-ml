@@ -201,11 +201,22 @@
 </div>
 {% endif %}
 
-<!-- Static plots (all except t-SNE) -->
-{% if plots %}
+<!-- Interactive charts -->
+{% if charts %}
 <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Visualizations</div>
 <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
-  {% for plot in plots %}
+  {% for chart in charts %}
+  <div class="card" style="padding:1rem;">
+    <div style="font-size:0.8rem; color:var(--muted); margin-bottom:0.75rem;">{{ chart.title }}</div>
+    <div id="chart-{{ chart.slug }}" style="width:100%; height:{{ chart.layout.height or 360 }}px;"></div>
+  </div>
+  {% endfor %}
+</div>
+{% elif legacy_plots %}
+<div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Legacy Visualizations</div>
+<div style="font-size:0.8rem; color:var(--muted); margin-bottom:0.75rem;">This run predates saved interactive chart payloads, so these plots remain static until the run is regenerated.</div>
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
+  {% for plot in legacy_plots %}
   <div class="card" style="padding:1rem;">
     <div style="font-size:0.8rem; color:var(--muted); margin-bottom:0.5rem;">{{ plot.title }}</div>
     <a href="{{ plot.url }}" target="_blank">
@@ -256,10 +267,11 @@
 {% endblock %}
 
 {% block scripts %}
-{% if has_embeddings %}
+{% if has_embeddings or charts %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <script>
 const RUN_ID = "{{ run.run_id }}";
+const CHARTS = {{ charts|tojson }};
 const CACHE  = {};
 let STATE    = { dims: 2, view: 'scatter' };
 
@@ -271,6 +283,12 @@ const TAB10 = [
 // Which views are meaningful per dimension count
 const VIEWS_FOR = { 2: ['scatter'], 3: ['scatter','parallel','matrix'],
                     4: ['scatter','parallel','matrix'], 5: ['scatter','parallel','matrix'] };
+
+function renderStoredCharts() {
+  CHARTS.forEach((chart) => {
+    Plotly.react(`chart-${chart.slug}`, chart.data, chart.layout, chart.config || { responsive: true });
+  });
+}
 
 async function fetchAndRender(dims, view) {
   STATE.dims = dims;
@@ -391,7 +409,10 @@ function render(data, view) {
 }
 
 // Boot with 3D scatter
+renderStoredCharts();
+{% if has_embeddings %}
 fetchAndRender(3, 'scatter');
+{% endif %}
 </script>
 {% endif %}
 {% endblock %}
