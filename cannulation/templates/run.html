@@ -17,9 +17,8 @@
   </div>
 </div>
 
-<!-- Top row: config + findings -->
+<!-- Config + Findings -->
 <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
-
   <div class="card">
     <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Config</div>
     <table>
@@ -35,9 +34,7 @@
   </div>
 
   <div class="card">
-    <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">
-      Analyzer Findings
-    </div>
+    <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Analyzer Findings</div>
     {% if run.findings %}
       <div style="display:flex; flex-direction:column; gap:0.5rem;">
         {% for f in run.findings %}
@@ -60,16 +57,13 @@
       <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.5rem;">Tuner Suggestion (next run)</div>
       {% set changed = [] %}
       {% for key, val in run.next_config.items() %}
-        {% if val != run.config[key] %}
-          {% set _ = changed.append((key, run.config[key], val)) %}
-        {% endif %}
+        {% if val != run.config[key] %}{% set _ = changed.append((key, run.config[key], val)) %}{% endif %}
       {% endfor %}
       {% if changed %}
         {% for key, old, new in changed %}
         <div style="font-size:0.85rem;">
           <span style="color:var(--muted);">{{ key }}</span>
-          <span style="color:var(--critical);">{{ old }}</span>
-          →
+          <span style="color:var(--critical);">{{ old }}</span> →
           <span style="color:var(--ok);">{{ new }}</span>
         </div>
         {% endfor %}
@@ -79,21 +73,16 @@
     </div>
     {% endif %}
   </div>
-
 </div>
 
-<!-- Epoch metrics table -->
+<!-- Epoch Metrics -->
 <div class="card" style="margin-bottom:1rem;">
   <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Epoch Metrics</div>
   <table>
     <thead>
       <tr>
-        <th>Epoch</th>
-        <th>Train Loss</th>
-        <th>Train Acc</th>
-        <th>Val Loss</th>
-        <th>Val Acc</th>
-        <th>Δ Val Acc</th>
+        <th>Epoch</th><th>Train Loss</th><th>Train Acc</th>
+        <th>Val Loss</th><th>Val Acc</th><th>Δ Val Acc</th>
       </tr>
     </thead>
     <tbody>
@@ -110,9 +99,7 @@
             <span style="color:{% if delta > 0 %}var(--ok){% elif delta < 0 %}var(--critical){% else %}var(--muted){% endif %};">
               {{ "%+.4f"|format(delta) }}
             </span>
-          {% else %}
-            <span style="color:var(--muted);">—</span>
-          {% endif %}
+          {% else %}<span style="color:var(--muted);">—</span>{% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -120,10 +107,10 @@
   </table>
 </div>
 
-<!-- Plots -->
+<!-- Static plots (all except t-SNE) -->
 {% if plots %}
 <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Visualizations</div>
-<div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
   {% for plot in plots %}
   <div class="card" style="padding:1rem;">
     <div style="font-size:0.8rem; color:var(--muted); margin-bottom:0.5rem;">{{ plot.title }}</div>
@@ -135,4 +122,182 @@
 </div>
 {% endif %}
 
+<!-- ── Embedding Visualization ──────────────────────────────────── -->
+<div class="card">
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem;">
+    <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted);">
+      Embedding Visualization
+    </div>
+
+    {% if has_embeddings %}
+    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+      <span style="font-size:0.75rem; color:var(--muted);">Dims:</span>
+      <button class="ctrl-btn dim-btn active" data-dims="2"  onclick="setDims(2)">2D</button>
+      <button class="ctrl-btn dim-btn"        data-dims="3"  onclick="setDims(3)">3D</button>
+      <button class="ctrl-btn dim-btn"        data-dims="4"  onclick="setDims(4)">4D</button>
+      <button class="ctrl-btn dim-btn"        data-dims="5"  onclick="setDims(5)">5D</button>
+      <span style="font-size:0.75rem; color:var(--muted); margin-left:0.5rem;">View:</span>
+      <button class="ctrl-btn view-btn active" data-view="scatter"  onclick="setView('scatter')">Scatter</button>
+      <button class="ctrl-btn view-btn"        data-view="parallel" onclick="setView('parallel')">Parallel</button>
+      <button class="ctrl-btn view-btn"        data-view="matrix"   onclick="setView('matrix')">Matrix</button>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if has_embeddings %}
+    <div id="emb-loading" style="display:none; text-align:center; padding:3rem; color:var(--muted);">
+      Computing t-SNE<span id="emb-dots">...</span> (first time for this dimension count)
+    </div>
+    <div id="emb-plot" style="width:100%; height:560px;"></div>
+    <div id="emb-note" style="font-size:0.75rem; color:var(--muted); margin-top:0.5rem; text-align:center;"></div>
+  {% elif static_tsne %}
+    <div style="font-size:0.8rem; color:var(--muted); margin-bottom:0.5rem;">2D t-SNE (static — re-run to enable interactive mode)</div>
+    <a href="{{ static_tsne.url }}" target="_blank">
+      <img src="{{ static_tsne.url }}" alt="t-SNE" style="width:100%; border-radius:4px; display:block;">
+    </a>
+  {% else %}
+    <div style="color:var(--muted); font-size:0.85rem;">No embedding data available for this run.</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if has_embeddings %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<script>
+const RUN_ID = "{{ run.run_id }}";
+const CACHE  = {};
+let STATE    = { dims: 2, view: 'scatter' };
+
+const TAB10 = [
+  '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
+  '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'
+];
+
+// Which views are meaningful per dimension count
+const VIEWS_FOR = { 2: ['scatter'], 3: ['scatter','parallel','matrix'],
+                    4: ['scatter','parallel','matrix'], 5: ['scatter','parallel','matrix'] };
+
+async function fetchAndRender(dims, view) {
+  STATE.dims = dims;
+  if (!VIEWS_FOR[dims].includes(view)) view = VIEWS_FOR[dims][0];
+  STATE.view = view;
+  updateControls();
+
+  const key = `${dims}d`;
+  if (!CACHE[key]) {
+    showLoading(true);
+    try {
+      const res = await fetch(`/api/run/${RUN_ID}/embeddings?dims=${dims}`);
+      if (!res.ok) { showError(await res.text()); return; }
+      CACHE[key] = await res.json();
+    } finally { showLoading(false); }
+  }
+  render(CACHE[key], STATE.view);
+}
+
+function setDims(d) { fetchAndRender(d, STATE.view); }
+function setView(v) { fetchAndRender(STATE.dims, v); }
+
+function updateControls() {
+  document.querySelectorAll('.dim-btn').forEach(b =>
+    b.classList.toggle('active', parseInt(b.dataset.dims) === STATE.dims));
+  const avail = VIEWS_FOR[STATE.dims];
+  document.querySelectorAll('.view-btn').forEach(b => {
+    const ok = avail.includes(b.dataset.view);
+    b.classList.toggle('active', b.dataset.view === STATE.view);
+    b.disabled = !ok;
+  });
+}
+
+function showLoading(on) {
+  document.getElementById('emb-loading').style.display = on ? 'block' : 'none';
+  document.getElementById('emb-plot').style.visibility  = on ? 'hidden' : 'visible';
+  if (on) {
+    // Animate the dots
+    let n = 0;
+    window._dotsTimer = setInterval(() => {
+      document.getElementById('emb-dots').textContent = '.'.repeat((++n % 3) + 1);
+    }, 400);
+  } else {
+    clearInterval(window._dotsTimer);
+  }
+}
+
+function showError(msg) {
+  document.getElementById('emb-note').textContent = 'Error: ' + msg;
+}
+
+function render(data, view) {
+  const { coords, labels, dims } = data;
+  const note = document.getElementById('emb-note');
+  const base = {
+    margin: { l:40, r:40, t:20, b:40 },
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: '#f8fafc',
+    font: { family: 'ui-monospace, monospace', size: 11 },
+    legend: { title: { text: 'Digit' }, tracegroupgap: 2 },
+  };
+
+  if (view === 'scatter' && dims === 2) {
+    const traces = Array.from({length:10}, (_,cls) => {
+      const idx = labels.flatMap((l,i) => l===cls ? [i] : []);
+      return { type:'scatter', mode:'markers', name:`${cls}`,
+               x: idx.map(i=>coords[i][0]), y: idx.map(i=>coords[i][1]),
+               marker:{ color:TAB10[cls], size:5, opacity:0.75 } };
+    });
+    Plotly.react('emb-plot', traces, base);
+    note.textContent = '2D t-SNE — hover for sample index';
+
+  } else if (view === 'scatter') {
+    const traces = Array.from({length:10}, (_,cls) => {
+      const idx = labels.flatMap((l,i) => l===cls ? [i] : []);
+      return { type:'scatter3d', mode:'markers', name:`${cls}`,
+               x: idx.map(i=>coords[i][0]),
+               y: idx.map(i=>coords[i][1]),
+               z: idx.map(i=>coords[i][2]),
+               marker:{ color:TAB10[cls], size:3, opacity:0.75 } };
+    });
+    Plotly.react('emb-plot', traces, {
+      ...base,
+      scene:{ xaxis:{title:'dim 1'}, yaxis:{title:'dim 2'}, zaxis:{title:'dim 3'} }
+    });
+    note.textContent = dims > 3
+      ? `3D scatter using first 3 of ${dims} dims — switch to Parallel or Matrix to see all dimensions`
+      : '3D t-SNE — drag to rotate, scroll to zoom';
+
+  } else if (view === 'parallel') {
+    const trace = {
+      type: 'parcoords',
+      line: {
+        color: labels, colorscale: TAB10.map((c,i) => [i/9, c]),
+        showscale: true,
+        colorbar: { title:'Digit', tickvals:[0,1,2,3,4,5,6,7,8,9], thickness:12 },
+      },
+      dimensions: Array.from({length:dims}, (_,i) => ({
+        label: `Dim ${i+1}`, values: coords.map(c => c[i]),
+      })),
+    };
+    Plotly.react('emb-plot', [trace], { ...base, plot_bgcolor:'transparent' });
+    note.textContent = `Parallel coordinates across all ${dims} t-SNE dimensions — each line is one sample, colored by digit class. Drag axes to reorder or brush to filter.`;
+
+  } else if (view === 'matrix') {
+    const trace = {
+      type: 'splom',
+      dimensions: Array.from({length:dims}, (_,i) => ({
+        label: `Dim ${i+1}`, values: coords.map(c => c[i]),
+      })),
+      marker: { color:labels, colorscale:'Turbo', size:3, opacity:0.6, showscale:false },
+      diagonal: { visible:false },
+      showupperhalf: false,
+    };
+    Plotly.react('emb-plot', [trace], { ...base, plot_bgcolor:'transparent' });
+    note.textContent = `Pairwise scatter matrix (lower triangle) for all ${dims} t-SNE dimensions — color = digit class`;
+  }
+}
+
+// Boot with 3D scatter
+fetchAndRender(3, 'scatter');
+</script>
+{% endif %}
 {% endblock %}
