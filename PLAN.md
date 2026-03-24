@@ -252,6 +252,91 @@ Every feature should serve one of three goals:
 
 ---
 
+### 4.4 Training-Aware Graph Inspector
+
+**Goal:** Borrow the best part of tools like Netron: a navigable model graph with shapes, params, operator attributes, and layer-level detail panels. But make it training-aware by overlaying runtime telemetry on top of the static graph.
+
+**What to show per node:**
+- Layer type and module path
+- Input/output shapes
+- Trainable parameter count
+- Estimated FLOPs / MACs
+- Operator attributes (kernel size, stride, padding, activation type, etc.)
+- Attached runtime badges: vanishing gradients, exploding gradients, dead neurons, saturation, over-compression
+
+**UI behaviors:**
+- Search by layer name or type
+- Filter to only problematic layers
+- Expand a node to see static properties + runtime stats + related charts
+- Color graph edges/nodes by health score
+
+**Files to change:**
+- `cannulation/graph.py` — new module, normalized internal graph model (`ModelGraph`, `GraphNode`, `GraphEdge`, `TensorSpec`)
+- `cannulation/model_inspector.py` — new module, extracts shapes, params, and operator metadata from the PyTorch model
+- `cannulation/runner.py` — save graph metadata into the experiment record or sibling JSON file
+- `cannulation/web.py` — route/API for graph payloads on the run detail page
+- `cannulation/templates/run.html` — graph explorer section with node detail drawer
+
+**Borrow from Netron:**
+- Graph / node / tensor abstraction
+- Shape and dtype as first-class metadata
+- Node detail panels driven by operator metadata
+
+---
+
+### 4.5 Rich Runtime Telemetry
+
+**Goal:** Replace thin mean/std summaries with distributions and optimizer-aware diagnostics that explain how the model is actually learning.
+
+**Add per layer:**
+- Activation percentiles (`p1`, `p5`, `p50`, `p95`, `p99`)
+- Positive/negative fraction and saturation fraction
+- Channel-wise activation summaries for conv layers
+- Gradient percentiles and near-zero gradient fraction
+- Gradient-to-weight norm ratio
+- Update-to-weight ratio after optimizer step
+- Telemetry drift across epochs, not just final snapshots
+
+**Sampling strategy:**
+- Keep epoch summaries for cheap storage
+- Also retain sampled batch-level telemetry for the first, middle, and last portion of each epoch
+- Persist enough raw distribution data to render boxplots, histograms, and trend charts later
+
+**Files to change:**
+- `cannulation/hooks.py` — capture richer activation/gradient stats and per-channel summaries
+- `cannulation/trainer.py` — collect sampled batch telemetry, optimizer/update ratios, and LR-over-time
+- `cannulation/analyzer.py` — promote from threshold-only checks to distribution-aware analysis
+- `cannulation/visualizer.py` — new plots for distributions, drift, and update ratios
+- `cannulation/templates/run.html` — telemetry drill-down panels per layer
+
+---
+
+### 4.6 Error and Slice Explorer
+
+**Goal:** Improve the model by understanding what it gets wrong, not just whether val accuracy went up.
+
+**What to track per run:**
+- Confusion matrix
+- Per-class precision / recall / F1
+- Highest-loss examples
+- Most uncertain predictions
+- Hardest class pairs
+- Calibration metrics (ECE + reliability diagram)
+- Slice metrics by class, source, metadata bucket, or feature range
+
+**Why this matters:**
+- Many failures are data problems or slice-specific generalization failures, not architecture problems
+- This exposes whether the next action should be more data, rebalancing, augmentation, relabeling, or architecture changes
+
+**Files to change:**
+- `cannulation/evaluation.py` — new module, computes confusion matrices, per-class metrics, calibration, and hardest examples
+- `cannulation/datasets.py` — retain slice metadata / sample identifiers for later analysis
+- `cannulation/runner.py` — save evaluation payloads alongside run metrics
+- `cannulation/web.py` — API endpoints for confusion matrix and slice explorer data
+- `cannulation/templates/run.html` — error analysis section with confusion heatmap and slice tables
+
+---
+
 ## Phase 5 — Run Comparison
 
 ### 5.1 Overlay Charts
@@ -280,6 +365,23 @@ Every feature should serve one of three goals:
 
 ---
 
+### 5.3 Model and Telemetry Diff
+
+**Goal:** Compare two runs structurally, not just by scalar metrics, so you can see which layers changed and whether the change actually improved training behavior.
+
+**Diff views:**
+- Layer-by-layer static graph diff (shapes, params, FLOPs, operator attributes)
+- Layer-by-layer telemetry delta (activation health, gradient health, update ratios)
+- Per-class metric delta and confusion matrix delta
+- Embedding separability delta and hardest-class-pair changes
+
+**Files to change:**
+- `cannulation/web.py` — extend compare route with graph + telemetry diff payloads
+- `cannulation/templates/compare.html` — side-by-side model inspector and telemetry diff tables
+- `cannulation/analyzer.py` — summarize the most important run-to-run regressions and improvements
+
+---
+
 ## Dependency order
 
 ```
@@ -296,9 +398,137 @@ Every feature should serve one of three goals:
 4.1 Grad-CAM             ←  requires 1.1 (image tasks)
 4.2 Dead Neuron Map      ←  requires hooks.py changes
 4.3 Loss Landscape       ←  standalone, opt-in
+4.4 Graph Inspector      ←  benefits from 3.1 FLOPs / params
+4.5 Rich Telemetry       ←  requires hooks.py + trainer.py changes
+4.6 Error / Slice Explorer ← requires 1.1 dataset flexibility
 5.1 Overlay Charts       ←  requires 3.1 for full value
 5.2 Config Diff          ←  requires 5.1
+5.3 Model / Telemetry Diff ← requires 4.4 + 4.5 + 5.1
 ```
+
+## Recommended implementation sequence
+
+The roadmap above is the full feature set. This is the practical build order for the current codebase if the goal is to improve the model fastest while keeping the implementation coherent.
+
+### Milestone A — Make runs worth comparing
+
+**Why first:** The current system still lacks the basic data needed to explain why a run improved or regressed. Before adding more UI, make each run produce better artifacts.
+
+**Build in this order:**
+1. `1.1 Dataset Flexibility`
+2. `3.1 FLOPs and Parameter Counting`
+3. `4.6 Error and Slice Explorer` (metrics payload only first, UI second)
+
+**Concrete repo work:**
+- `cannulation/datasets.py` — retain sample identifiers and slice metadata
+- `cannulation/trainer.py` — expose predictions, losses, confidences, and labels from validation
+- `cannulation/runner.py` — save efficiency + evaluation payloads into experiment artifacts
+- `cannulation/web.py` — surface these metrics on the run detail page and run list
+
+**Definition of done:**
+- Every run records per-class metrics, confusion data, hardest examples, and efficiency stats
+- Two runs can already be compared meaningfully even before graph inspection exists
+
+---
+
+### Milestone B — Upgrade telemetry from summary stats to diagnostics
+
+**Why second:** The analyzer and charts are bottlenecked by weak hook data. Richer telemetry unlocks better charts, better alerts, and later graph overlays.
+
+**Build in this order:**
+1. `4.5 Rich Runtime Telemetry`
+2. `2.2 LR Scheduling` with LR-over-time capture
+3. `2.4 Auto-apply Analyzer Fixes` after telemetry is trustworthy
+
+**Concrete repo work:**
+- `cannulation/hooks.py` — percentiles, saturation, channel summaries, gradient sparsity
+- `cannulation/trainer.py` — sampled batch telemetry, update-to-weight ratio, LR trace, optimizer-step stats
+- `cannulation/analyzer.py` — switch from threshold-only logic to distribution-aware findings
+- `cannulation/visualizer.py` — distribution charts, drift charts, and optimizer-health charts
+
+**Definition of done:**
+- A run page can explain optimization behavior layer by layer, not just show a final warning badge
+- The analyzer starts producing fewer generic suggestions and more layer-specific ones
+
+---
+
+### Milestone C — Add the training-aware graph inspector
+
+**Why third:** Once runs have strong static and runtime data, the graph view becomes a force multiplier instead of a pretty shell.
+
+**Build in this order:**
+1. `4.4 Training-Aware Graph Inspector`
+2. Integrate `3.1` FLOPs/params into graph nodes
+3. Overlay `4.5` telemetry onto nodes and edges
+
+**Concrete repo work:**
+- `cannulation/graph.py` — stable internal graph schema
+- `cannulation/model_inspector.py` — PyTorch graph extraction, shapes, params, operator metadata
+- `cannulation/runner.py` — persist graph metadata per run
+- `cannulation/web.py` — graph API + node detail payloads
+- `cannulation/templates/run.html` — graph explorer with search/filter/detail panel
+
+**Definition of done:**
+- Clicking a layer shows its shape, params, operator attributes, activation health, gradient health, and related charts
+- The graph view is useful enough to debug bad architectures without reading raw model code
+
+---
+
+### Milestone D — Make comparison a first-class workflow
+
+**Why fourth:** Improvement work is comparative. Once single-run inspection is strong, the next leverage point is showing what changed between runs.
+
+**Build in this order:**
+1. `5.1 Overlay Charts`
+2. `5.2 Config Diff`
+3. `5.3 Model and Telemetry Diff`
+
+**Concrete repo work:**
+- `cannulation/web.py` — comparison routes returning config, metric, graph, and telemetry deltas
+- `cannulation/templates/compare.html` — overlay charts + diff tables + side-by-side inspector views
+- `cannulation/analyzer.py` — summarize the most important regression or improvement between runs
+
+**Definition of done:**
+- You can answer "what changed?" and "did it help?" from the compare page alone
+
+---
+
+### Milestone E — Add expensive interpretability and optimization extras
+
+**Why last:** These are valuable, but they should come after the observability foundation. Otherwise they produce isolated visualizations without enough context.
+
+**Build in this order:**
+1. `4.1 Grad-CAM`
+2. `4.2 Dead Neuron Map`
+3. `4.3 Loss Landscape`
+4. `3.2 Pruning`
+5. `2.3 Optuna Search`
+
+**Concrete repo work:**
+- Add these only after run artifacts, graph metadata, and comparison workflows already exist
+- Make all expensive features opt-in and persist their outputs as reusable run artifacts
+
+**Definition of done:**
+- These features augment decision-making rather than becoming disconnected demo pages
+
+---
+
+## If we want the single best next step
+
+Start with a narrow vertical slice of `4.5 Rich Runtime Telemetry` plus the data payload half of `4.6 Error and Slice Explorer`.
+
+That combination gives the fastest payoff because it improves:
+- The analyzer
+- The charts
+- The eventual graph inspector
+- Run comparison
+- Model tuning decisions
+
+**Suggested first PR sequence:**
+1. Expand `cannulation/hooks.py` telemetry schema
+2. Expand `cannulation/trainer.py` validation outputs and optimizer diagnostics
+3. Add `cannulation/evaluation.py` and save confusion/per-class metrics in `cannulation/runner.py`
+4. Update `cannulation/web.py` and `cannulation/templates/run.html` to show the new diagnostics
 
 ## New files summary
 
@@ -311,5 +541,8 @@ Every feature should serve one of three goals:
 | `cannulation/pruning.py` | Magnitude and structured pruning |
 | `cannulation/gradcam.py` | Grad-CAM implementation |
 | `cannulation/landscape.py` | Loss landscape visualization |
+| `cannulation/graph.py` | Internal graph representation for model inspection |
+| `cannulation/model_inspector.py` | Extract shapes, params, FLOPs, and operator metadata from PyTorch models |
+| `cannulation/evaluation.py` | Confusion matrices, per-class metrics, calibration, and hardest-example analysis |
 | `cannulation/templates/compare.html` | Multi-run comparison page |
 | `cannulation/templates/search.html` | Optuna search results page |
