@@ -66,7 +66,7 @@ class RunConfig(BaseModel):
 
 def _load_runs() -> list:
     runs = []
-    for path in sorted(EXPERIMENTS_DIR.glob("*.json"), reverse=True):
+    for path in sorted(EXPERIMENTS_DIR.glob("[0-9]*_[0-9]*.json"), reverse=True):
         with open(path) as f:
             data = json.load(f)
         findings = data.get("findings", [])

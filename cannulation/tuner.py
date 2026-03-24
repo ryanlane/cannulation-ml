@@ -37,7 +37,7 @@ class Tuner:
             return []
         runs = []
         for fname in sorted(os.listdir(self.experiments_dir)):
-            if fname.endswith(".json"):
+            if fname.endswith(".json") and fname[:8].isdigit():
                 with open(os.path.join(self.experiments_dir, fname)) as fh:
                     runs.append(json.load(fh))
         return runs
