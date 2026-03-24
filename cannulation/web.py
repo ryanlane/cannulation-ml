@@ -127,11 +127,14 @@ async def run_detail(request: Request, run_id: str):
     with open(path) as f:
         data = json.load(f)
 
-    plots = [
+    all_plots = [
         {"slug": slug, "title": title, "url": f"/plots/{run_id}_{slug}.png"}
         for slug, title in PLOT_NAMES
         if (PLOTS_DIR / f"{run_id}_{slug}.png").exists()
     ]
+    plots = [p for p in all_plots if p["slug"] != "tsne"]
+    static_tsne = next((p for p in all_plots if p["slug"] == "tsne"), None)
+    has_embeddings = (EXPERIMENTS_DIR / f"{run_id}_embeddings.json").exists()
 
     epochs = list(range(1, len(data["metrics"]["val_acc"]) + 1))
     epoch_rows = list(zip(
@@ -145,6 +148,8 @@ async def run_detail(request: Request, run_id: str):
     return templates.TemplateResponse(request, "run.html", {
         "run": data,
         "plots": plots,
+        "static_tsne": static_tsne,
+        "has_embeddings": has_embeddings,
         "epoch_rows": epoch_rows,
     })
 
@@ -195,6 +200,37 @@ async def run_status(run_id: str):
     if run_id not in active_runs:
         return {"status": "unknown", "run_id": run_id}
     return active_runs[run_id]
+
+
+@app.get("/api/run/{run_id}/embeddings")
+async def run_embeddings(run_id: str, dims: int = 3):
+    if dims < 2 or dims > 5:
+        raise HTTPException(status_code=400, detail="dims must be 2–5")
+
+    cache_path = EXPERIMENTS_DIR / f"{run_id}_tsne_{dims}d.json"
+    if cache_path.exists():
+        with open(cache_path) as f:
+            return json.load(f)
+
+    raw_path = EXPERIMENTS_DIR / f"{run_id}_embeddings.json"
+    if not raw_path.exists():
+        raise HTTPException(status_code=404, detail="Embeddings not found — re-run to generate")
+
+    import numpy as np
+    from sklearn.manifold import TSNE
+
+    with open(raw_path) as f:
+        data = json.load(f)
+
+    coords = TSNE(
+        n_components=dims, random_state=42, perplexity=30
+    ).fit_transform(np.array(data["embeddings"]))
+
+    result = {"coords": coords.tolist(), "labels": data["labels"], "dims": dims}
+    with open(cache_path, "w") as f:
+        json.dump(result, f)
+
+    return result
 
 
 @app.get("/api/default-config")

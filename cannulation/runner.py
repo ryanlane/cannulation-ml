@@ -75,10 +75,17 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     with open(record_path, "w") as fh:
         json.dump(record, fh, indent=2)
 
+    # Extract embeddings once — used for static PNG and saved for interactive viz
+    print("\n  Extracting embeddings...")
+    raw_emb, raw_labels = trainer.get_embeddings()
+    emb_path = os.path.join(EXPERIMENTS_DIR, f"{run_id}_embeddings.json")
+    with open(emb_path, "w") as fh:
+        json.dump({"embeddings": raw_emb.tolist(), "labels": raw_labels.tolist()}, fh)
+
     # Visualize
-    print("\n  Generating plots...")
+    print("  Generating plots...")
     viz = Visualizer(PLOTS_DIR)
-    plot_paths = viz.plot_all(run_id, metrics, trainer)
+    plot_paths = viz.plot_all(run_id, metrics, trainer.model, raw_emb, raw_labels)
     print(f"  Saved: {', '.join(os.path.basename(p) for p in plot_paths)}")
 
     hooks.remove()

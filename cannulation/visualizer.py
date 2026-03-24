@@ -111,10 +111,11 @@ class Visualizer:
         ax.axis("off")
         return self._save("tsne", run_id)
 
-    def plot_all(self, run_id: str, metrics: Dict, trainer) -> List[str]:
+    def plot_all(self, run_id: str, metrics: Dict, model,
+                 embeddings: np.ndarray, labels: np.ndarray) -> List[str]:
         paths = [
             self.plot_training_curves(metrics, run_id),
-            self.plot_weight_distributions(trainer.model, run_id),
+            self.plot_weight_distributions(model, run_id),
         ]
         p = self.plot_gradient_flow(metrics["epoch_telemetry"], run_id)
         if p:
@@ -122,6 +123,5 @@ class Visualizer:
         p = self.plot_activation_health(metrics["epoch_telemetry"], run_id)
         if p:
             paths.append(p)
-        emb, lbl = trainer.get_embeddings()
-        paths.append(self.plot_tsne(emb, lbl, run_id))
+        paths.append(self.plot_tsne(embeddings, labels, run_id))
         return paths
