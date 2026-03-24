@@ -223,7 +223,10 @@ async def run_embeddings(run_id: str, dims: int = 3):
         data = json.load(f)
 
     coords = TSNE(
-        n_components=dims, random_state=42, perplexity=30
+        n_components=dims,
+        random_state=42,
+        perplexity=30,
+        method="exact" if dims > 3 else "barnes_hut",
     ).fit_transform(np.array(data["embeddings"]))
 
     result = {"coords": coords.tolist(), "labels": data["labels"], "dims": dims}
