@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Dict, List, Any
 
 from .analyzer import Finding
@@ -37,7 +38,7 @@ class Tuner:
             return []
         runs = []
         for fname in sorted(os.listdir(self.experiments_dir)):
-            if fname.endswith(".json") and fname[:8].isdigit():
+            if re.fullmatch(r"\d{8}_\d{6}\.json", fname):
                 with open(os.path.join(self.experiments_dir, fname)) as fh:
                     runs.append(json.load(fh))
         return runs
