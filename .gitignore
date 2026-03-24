@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environment
+.venv
+
+# uv
+.python-version
+
+# ML runtime outputs — generated, not source code
+data/
+experiments/
+plots/
+
+# Claude Code local state
+.claude/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

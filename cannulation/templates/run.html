@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ run.run_id }} — Cannulation ML{% endblock %}
+
+{% block content %}
+<div style="margin-bottom:1.5rem;">
+  <a href="/" style="font-size:0.85rem; color:var(--muted);">← all runs</a>
+</div>
+
+<div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:1.5rem;">
+  <div>
+    <h1>{{ run.run_id }}</h1>
+    <h2>{{ epoch_rows|length }} epoch{{ 's' if epoch_rows|length != 1 else '' }} &nbsp;·&nbsp; {{ run.elapsed_seconds }}s</h2>
+  </div>
+  <div style="font-size:1.8rem; font-weight:700; color:var(--ok);">
+    {{ "%.2f%%"|format(run.metrics.val_acc[-1] * 100) }}
+    <span style="font-size:0.85rem; font-weight:400; color:var(--muted);">val acc</span>
+  </div>
+</div>
+
+<!-- Top row: config + findings -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
+
+  <div class="card">
+    <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Config</div>
+    <table>
+      <tbody>
+        {% for key, val in run.config.items() %}
+        <tr>
+          <td style="color:var(--muted); width:40%;">{{ key }}</td>
+          <td><strong>{{ val }}</strong></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">
+      Analyzer Findings
+    </div>
+    {% if run.findings %}
+      <div style="display:flex; flex-direction:column; gap:0.5rem;">
+        {% for f in run.findings %}
+        <div style="border-left:3px solid {% if f.severity == 'critical' %}var(--critical){% elif f.severity == 'warning' %}var(--warning){% else %}var(--info){% endif %}; padding:0.5rem 0.75rem; background:var(--bg); border-radius:0 4px 4px 0;">
+          <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.2rem;">
+            <span class="badge badge-{{ f.severity }}">{{ f.severity }}</span>
+            <span style="color:var(--muted); font-size:0.8rem;">{{ f.layer }}</span>
+          </div>
+          <div style="font-size:0.85rem;">{{ f.issue }}</div>
+          <div style="font-size:0.8rem; color:var(--muted); margin-top:0.2rem;">→ {{ f.suggestion }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div style="color:var(--ok); font-size:0.9rem;">&#10003; No issues detected</div>
+    {% endif %}
+
+    {% if run.next_config %}
+    <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border);">
+      <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.5rem;">Tuner Suggestion (next run)</div>
+      {% set changed = [] %}
+      {% for key, val in run.next_config.items() %}
+        {% if val != run.config[key] %}
+          {% set _ = changed.append((key, run.config[key], val)) %}
+        {% endif %}
+      {% endfor %}
+      {% if changed %}
+        {% for key, old, new in changed %}
+        <div style="font-size:0.85rem;">
+          <span style="color:var(--muted);">{{ key }}</span>
+          <span style="color:var(--critical);">{{ old }}</span>
+          →
+          <span style="color:var(--ok);">{{ new }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div style="color:var(--muted); font-size:0.85rem;">No changes suggested</div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- Epoch metrics table -->
+<div class="card" style="margin-bottom:1rem;">
+  <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Epoch Metrics</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Epoch</th>
+        <th>Train Loss</th>
+        <th>Train Acc</th>
+        <th>Val Loss</th>
+        <th>Val Acc</th>
+        <th>Δ Val Acc</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for epoch, tl, ta, vl, va in epoch_rows %}
+      <tr>
+        <td>{{ epoch }}</td>
+        <td>{{ "%.4f"|format(tl) }}</td>
+        <td>{{ "%.2f%%"|format(ta * 100) }}</td>
+        <td>{{ "%.4f"|format(vl) }}</td>
+        <td><strong>{{ "%.2f%%"|format(va * 100) }}</strong></td>
+        <td>
+          {% if loop.index0 > 0 %}
+            {% set delta = va - epoch_rows[loop.index0 - 1][4] %}
+            <span style="color:{% if delta > 0 %}var(--ok){% elif delta < 0 %}var(--critical){% else %}var(--muted){% endif %};">
+              {{ "%+.4f"|format(delta) }}
+            </span>
+          {% else %}
+            <span style="color:var(--muted);">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Plots -->
+{% if plots %}
+<div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem;">Visualizations</div>
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+  {% for plot in plots %}
+  <div class="card" style="padding:1rem;">
+    <div style="font-size:0.8rem; color:var(--muted); margin-bottom:0.5rem;">{{ plot.title }}</div>
+    <a href="{{ plot.url }}" target="_blank">
+      <img src="{{ plot.url }}" alt="{{ plot.title }}" style="width:100%; border-radius:4px; display:block;">
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}

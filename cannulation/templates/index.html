@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% block title %}Runs — Cannulation ML{% endblock %}
+
+{% block content %}
+
+<!-- ── Launch panel ─────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:1.5rem;">
+  <div style="display:flex; align-items:center; justify-content:space-between;">
+    <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted);">New Run</div>
+    <button id="toggle-form-btn" onclick="toggleForm()"
+      style="font-size:0.8rem; background:var(--accent); color:#fff; border:none; border-radius:4px; padding:0.35rem 0.9rem; cursor:pointer;">
+      Configure &amp; Launch
+    </button>
+  </div>
+
+  <!-- Config form (hidden by default, or visible if a run is active) -->
+  <div id="run-form-wrap" style="display:none; margin-top:1.25rem; border-top:1px solid var(--border); padding-top:1.25rem;">
+    <form id="run-form" onsubmit="submitRun(event)">
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:0.75rem; margin-bottom:1rem;">
+
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          Learning Rate
+          <input name="lr" type="number" step="0.0001" min="0.00001" max="0.1"
+            value="{{ default_cfg.lr }}"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          Dropout
+          <input name="dropout" type="number" step="0.05" min="0" max="0.9"
+            value="{{ default_cfg.dropout }}"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          Epochs
+          <input name="epochs" type="number" step="1" min="1" max="50"
+            value="{{ default_cfg.epochs }}"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          Conv Channels (comma-separated)
+          <input name="conv_channels" type="text"
+            value="{{ default_cfg.conv_channels | join(',') }}"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          FC Layer Size
+          <input name="fc_size" type="number" step="16" min="32" max="1024"
+            value="{{ default_cfg.fc_size }}"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          Batch Size
+          <input name="batch_size" type="number" step="16" min="16" max="512"
+            value="{{ default_cfg.batch_size }}"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
+      </div>
+
+      <div style="display:flex; align-items:center; gap:1.5rem;">
+        <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.85rem; cursor:pointer;">
+          <input id="iterate-cb" type="checkbox" name="iterate"
+            style="width:14px; height:14px; cursor:pointer;">
+          Use tuner's suggested config from last run
+        </label>
+        <button type="submit" id="submit-btn"
+          style="font-size:0.85rem; background:var(--ok); color:#fff; border:none; border-radius:4px; padding:0.4rem 1.1rem; cursor:pointer; font-family:inherit;">
+          ▶ Start Run
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Live log output -->
+  <div id="log-wrap" style="display:none; margin-top:1rem; border-top:1px solid var(--border); padding-top:1rem;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.5rem;">
+      <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted);">
+        Training Output &nbsp;
+        <span id="run-status-badge" class="badge badge-info">running</span>
+      </div>
+      <span id="run-id-label" style="font-size:0.75rem; color:var(--muted);"></span>
+    </div>
+    <pre id="log-output"
+      style="background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:0.75rem 1rem; font-size:0.8rem; line-height:1.5; max-height:280px; overflow-y:auto; white-space:pre-wrap; word-break:break-word;"></pre>
+    <div id="done-actions" style="display:none; margin-top:0.75rem; display:flex; gap:0.75rem; align-items:center;">
+      <a id="view-run-link" href="#"
+        style="font-size:0.85rem; background:var(--accent); color:#fff; border-radius:4px; padding:0.4rem 1rem; text-decoration:none;">
+        View Run →
+      </a>
+      <span style="font-size:0.8rem; color:var(--muted);">Page will refresh in <span id="countdown">3</span>s</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── Runs table ────────────────────────────────────────────── -->
+<div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:1rem;">
+  <div>
+    <h1>Experiment Runs</h1>
+    <h2>{{ runs|length }} total run{{ 's' if runs|length != 1 else '' }}</h2>
+  </div>
+</div>
+
+{% if runs %}
+<div class="stat-row">
+  <div class="stat">
+    <div class="stat-label">Total Runs</div>
+    <div class="stat-value">{{ runs|length }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Best Val Accuracy</div>
+    <div class="stat-value" style="color:var(--ok);">
+      {% if best_acc %}{{ "%.2f%%"|format(best_acc * 100) }}{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Latest Run</div>
+    <div class="stat-value" style="font-size:1rem;">{{ runs[0].run_id if runs else '—' }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Runs with Issues</div>
+    <div class="stat-value" style="color:var(--warning);">
+      {{ runs | selectattr('findings_count', '>', 0) | list | length }}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Run ID</th>
+        <th>Epochs</th>
+        <th>Val Acc</th>
+        <th>Train Acc</th>
+        <th>LR</th>
+        <th>Dropout</th>
+        <th>Time (s)</th>
+        <th>Findings</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td><a href="/run/{{ run.run_id }}">{{ run.run_id }}</a></td>
+        <td>{{ run.epochs }}</td>
+        <td><strong>{{ "%.2f%%"|format(run.val_acc * 100) }}</strong></td>
+        <td>{{ "%.2f%%"|format(run.train_acc * 100) }}</td>
+        <td>{{ run.lr }}</td>
+        <td>{{ run.dropout }}</td>
+        <td>{{ run.elapsed }}</td>
+        <td>
+          {% if run.findings_count == 0 %}
+            <span class="badge badge-ok">clean</span>
+          {% elif run.worst_severity == 'critical' %}
+            <span class="badge badge-critical">{{ run.findings_count }} critical</span>
+          {% elif run.worst_severity == 'warning' %}
+            <span class="badge badge-warning">{{ run.findings_count }} warning</span>
+          {% else %}
+            <span class="badge badge-info">{{ run.findings_count }} info</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% else %}
+<div class="card" style="text-align:center; padding:3rem; color:var(--muted);">
+  No runs yet — use the launcher above or run:<br><br>
+  <code style="background:var(--bg); padding:0.5rem 1rem; border-radius:4px;">uv run cannulation --epochs 5</code>
+</div>
+{% endif %}
+
+<script>
+  let pollInterval = null;
+  let activeRunId = null;
+
+  // If a run was already in progress when the page loaded, resume polling
+  {% if active_run %}
+  activeRunId = "{{ active_run.run_id }}";
+  showLogPanel(activeRunId);
+  startPolling(activeRunId);
+  {% endif %}
+
+  function toggleForm() {
+    const wrap = document.getElementById('run-form-wrap');
+    const btn  = document.getElementById('toggle-form-btn');
+    const open = wrap.style.display === 'none';
+    wrap.style.display = open ? 'block' : 'none';
+    btn.textContent = open ? 'Hide' : 'Configure & Launch';
+  }
+
+  async function submitRun(e) {
+    e.preventDefault();
+    const form = document.getElementById('run-form');
+    const data = Object.fromEntries(new FormData(form));
+
+    const payload = {
+      lr:            parseFloat(data.lr),
+      dropout:       parseFloat(data.dropout),
+      epochs:        parseInt(data.epochs),
+      fc_size:       parseInt(data.fc_size),
+      batch_size:    parseInt(data.batch_size),
+      conv_channels: data.conv_channels.split(',').map(s => parseInt(s.trim())),
+      iterate:       document.getElementById('iterate-cb').checked,
+    };
+
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+
+    const res = await fetch('/api/run/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+
+    const json = await res.json();
+
+    if (!res.ok) {
+      alert(json.error || 'Failed to start run');
+      btn.disabled = false;
+      btn.textContent = '▶ Start Run';
+      return;
+    }
+
+    activeRunId = json.run_id;
+    showLogPanel(activeRunId);
+    startPolling(activeRunId);
+  }
+
+  function showLogPanel(runId) {
+    document.getElementById('run-form-wrap').style.display = 'block';
+    document.getElementById('log-wrap').style.display = 'block';
+    document.getElementById('log-output').textContent = '';
+    document.getElementById('run-id-label').textContent = runId;
+    document.getElementById('done-actions').style.display = 'none';
+    document.getElementById('run-status-badge').textContent = 'running';
+    document.getElementById('run-status-badge').className = 'badge badge-info';
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+  }
+
+  function startPolling(runId) {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(() => pollStatus(runId), 1500);
+  }
+
+  async function pollStatus(runId) {
+    const res  = await fetch(`/api/run/${runId}/status`);
+    const data = await res.json();
+
+    const logEl = document.getElementById('log-output');
+    logEl.textContent = (data.logs || []).join('\n');
+    logEl.scrollTop = logEl.scrollHeight;
+
+    if (data.status === 'done' || data.status === 'error') {
+      clearInterval(pollInterval);
+      pollInterval = null;
+
+      const badge = document.getElementById('run-status-badge');
+      badge.textContent = data.status;
+      badge.className = data.status === 'done' ? 'badge badge-ok' : 'badge badge-critical';
+
+      if (data.status === 'done') {
+        const doneEl = document.getElementById('done-actions');
+        doneEl.style.display = 'flex';
+        document.getElementById('view-run-link').href = `/run/${runId}`;
+
+        let secs = 3;
+        const countEl = document.getElementById('countdown');
+        const timer = setInterval(() => {
+          secs--;
+          countEl.textContent = secs;
+          if (secs <= 0) { clearInterval(timer); location.reload(); }
+        }, 1000);
+      }
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = false;
+      btn.textContent = '▶ Start Run';
+    }
+  }
+</script>
+
+{% endblock %}
