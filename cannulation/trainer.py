@@ -67,24 +67,34 @@ class Trainer:
         patience = self.config.get("patience", 0)
         early_stopping = EarlyStopping(patience=patience) if patience > 0 else None
 
-        metrics: Dict[str, list] = {
+        metrics: Dict[str, Any] = {
             "train_loss": [], "train_acc": [],
             "val_loss": [], "val_acc": [],
             "epoch_telemetry": [],
+            "epoch_update_ratios": [],
+            "lr_trace": [],
         }
+
+        batches = list(self.train_loader)
 
         for epoch in range(epochs):
             self.model.train()
             self.hooks.clear()
             total_loss, correct, total = 0.0, 0, 0
+            epoch_update_ratios: Optional[Dict[str, float]] = None
 
-            for inputs, labels in self.train_loader:
+            for batch_idx, (inputs, labels) in enumerate(batches):
                 inputs = inputs.to(self.device)
                 labels = labels.to(self.device)
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
                 loss = self.criterion(outputs, labels)
                 loss.backward()
+
+                # Sample update-to-weight ratio from the last batch each epoch
+                if batch_idx == len(batches) - 1:
+                    epoch_update_ratios = self._sample_update_ratios()
+
                 self.optimizer.step()
 
                 total_loss += loss.item() * len(labels)
@@ -94,6 +104,8 @@ class Trainer:
             metrics["train_loss"].append(total_loss / total)
             metrics["train_acc"].append(correct / total)
             metrics["epoch_telemetry"].append(self.hooks.snapshot())
+            metrics["epoch_update_ratios"].append(epoch_update_ratios or {})
+            metrics["lr_trace"].append(self._current_lr())
 
             val_loss, val_acc = self._evaluate(self.val_loader)
             metrics["val_loss"].append(val_loss)
@@ -114,12 +126,29 @@ class Trainer:
                           f"best val_loss={early_stopping.best_loss:.4f})")
                     early_stopping.restore(self.model)
                     metrics["stopped_early"] = True
-                    metrics["best_epoch"] = (
-                        epoch + 1 - patience
-                    )
+                    metrics["best_epoch"] = epoch + 1 - patience
                     break
 
         return metrics
+
+    def _sample_update_ratios(self) -> Dict[str, float]:
+        """
+        Compute update-to-weight ratio (||ΔW|| / ||W||) for each trainable parameter.
+        Called before optimizer.step() with gradients already computed.
+        Uses lr * ||∇W|| / ||W|| as an approximation of the true update magnitude.
+        """
+        ratios = {}
+        lr = self._current_lr()
+        for name, param in self.model.named_parameters():
+            if param.requires_grad and param.grad is not None:
+                w_norm = param.data.norm().item()
+                if w_norm > 1e-10:
+                    approx_update = lr * param.grad.norm().item()
+                    ratios[name] = round(approx_update / w_norm, 6)
+        return ratios
+
+    def _current_lr(self) -> float:
+        return self.optimizer.param_groups[0]["lr"]
 
     def _evaluate(self, loader: DataLoader):
         self.model.eval()

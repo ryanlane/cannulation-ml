@@ -5,6 +5,12 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 DEFAULT_CONFIG = {
     "displayModeBar": True,
     "responsive": True,
@@ -261,12 +267,107 @@ class Visualizer:
         })
         return self._make_chart("weight_distributions", "Weight Distributions", traces, layout)
 
+    def plot_activation_percentiles(
+        self, epoch_telemetry: List[Dict[str, Any]], run_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Shows p5/median/p95 activation band per layer over epochs — reveals drift and saturation."""
+        layers = [
+            layer for layer in epoch_telemetry[0]
+            if epoch_telemetry[0][layer].get("activations", {}).get("p50") is not None
+        ]
+        if not layers:
+            return None
+
+        epochs = list(range(1, len(epoch_telemetry) + 1))
+        palette = ["#2563eb", "#0f766e", "#ea580c", "#7c3aed", "#be123c", "#0891b2"]
+        data = []
+
+        for idx, layer in enumerate(layers):
+            color = palette[idx % len(palette)]
+            p5  = [float(s[layer]["activations"].get("p5",  0)) for s in epoch_telemetry if s.get(layer, {}).get("activations")]
+            p50 = [float(s[layer]["activations"].get("p50", 0)) for s in epoch_telemetry if s.get(layer, {}).get("activations")]
+            p95 = [float(s[layer]["activations"].get("p95", 0)) for s in epoch_telemetry if s.get(layer, {}).get("activations")]
+            ep  = epochs[:len(p50)]
+
+            # Shaded band: p5 → p95
+            data.append({
+                "type": "scatter", "mode": "lines", "name": f"{layer} band",
+                "x": ep + ep[::-1], "y": p95 + p5[::-1],
+                "fill": "toself", "fillcolor": _hex_to_rgba(color, 0.12),
+                "line": {"color": "transparent"}, "showlegend": False,
+                "hoverinfo": "skip",
+            })
+            # Median line
+            data.append({
+                "type": "scatter", "mode": "lines+markers", "name": layer,
+                "x": ep, "y": p50,
+                "line": {"color": color, "width": 2},
+                "marker": {"size": 5},
+                "hovertemplate": f"{layer}<br>epoch=%{{x}}<br>median=%{{y:.4f}}<extra></extra>",
+            })
+
+        layout = self._base_layout(f"Run {run_id} - Activation Distributions", height=400)
+        layout.update({
+            "xaxis": {"title": "Epoch", "dtick": 1, "gridcolor": "rgba(148, 163, 184, 0.18)"},
+            "yaxis": {"title": "Activation Value", "gridcolor": "rgba(148, 163, 184, 0.18)"},
+            "hovermode": "x unified",
+        })
+        return self._make_chart("activation_percentiles", "Activation Distributions", data, layout)
+
+    def plot_update_ratios(
+        self, epoch_update_ratios: List[Dict[str, Any]], run_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Update-to-weight ratio per parameter — diagnoses learning rate health."""
+        if not epoch_update_ratios or not epoch_update_ratios[-1]:
+            return None
+
+        last_ratios = epoch_update_ratios[-1]
+        names = list(last_ratios.keys())
+        values = [last_ratios[n] for n in names]
+        if not values:
+            return None
+
+        colors = [
+            "#be123c" if v > 0.10 else "#2ca02c" if v > 1e-5 else "#ea580c"
+            for v in values
+        ]
+        layout = self._base_layout(f"Run {run_id} - Update/Weight Ratios", height=max(320, 80 + len(names) * 36))
+        layout.update({
+            "xaxis": {
+                "title": "‖ΔW‖ / ‖W‖  (lr × ‖∇W‖ / ‖W‖, last epoch)",
+                "type": "log",
+                "gridcolor": "rgba(148, 163, 184, 0.18)",
+            },
+            "yaxis": {"title": "Parameter", "automargin": True},
+            "shapes": [
+                {"type": "line", "x0": 1e-5, "x1": 1e-5, "y0": -0.5, "y1": len(names) - 0.5,
+                 "line": {"color": "#ea580c", "width": 1.5, "dash": "dash"}},
+                {"type": "line", "x0": 0.10, "x1": 0.10, "y0": -0.5, "y1": len(names) - 0.5,
+                 "line": {"color": "#be123c", "width": 1.5, "dash": "dash"}},
+            ],
+            "annotations": [
+                {"x": 1e-5, "y": 1.06, "xref": "x", "yref": "paper", "text": "Too slow",
+                 "showarrow": False, "font": {"color": "#ea580c", "size": 10}},
+                {"x": 0.10, "y": 1.06, "xref": "x", "yref": "paper", "text": "Too fast",
+                 "showarrow": False, "font": {"color": "#be123c", "size": 10}},
+            ],
+        })
+        data = [{
+            "type": "bar", "orientation": "h",
+            "x": values, "y": names,
+            "marker": {"color": colors},
+            "hovertemplate": "%{y}<br>ratio=%{x:.2e}<extra></extra>",
+        }]
+        return self._make_chart("update_ratios", "Update / Weight Ratios", data, layout)
+
     def build_all(self, run_id: str, metrics: Dict[str, Any], model) -> List[Dict[str, Any]]:
         charts = [
             self.plot_training_curves(metrics, run_id),
             self.plot_weight_distributions(model, run_id),
             self.plot_gradient_flow(metrics["epoch_telemetry"], run_id),
             self.plot_activation_health(metrics["epoch_telemetry"], run_id),
+            self.plot_activation_percentiles(metrics["epoch_telemetry"], run_id),
+            self.plot_update_ratios(metrics.get("epoch_update_ratios", [{}]), run_id),
         ]
         return [chart for chart in charts if chart is not None]
 
