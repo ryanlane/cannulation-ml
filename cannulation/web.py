@@ -71,6 +71,7 @@ class RunConfig(BaseModel):
     batch_size: int = 64
     epochs: int = 5
     patience: int = 0
+    schedule: Optional[str] = None
     data_source: Optional[str] = None
     target_col: Optional[str] = None
     val_split: float = 0.2
@@ -121,7 +122,7 @@ async def index(request: Request):
     defaults = {
         "conv_channels": [32, 64], "fc_size": 128, "dropout": 0.3,
         "lr": 0.001, "batch_size": 64, "epochs": 5, "patience": 0,
-        "data_source": None, "target_col": None, "val_split": 0.2,
+        "schedule": None, "data_source": None, "target_col": None, "val_split": 0.2,
     }
     default_cfg = {**defaults, **history[-1]["next_config"]} if history else defaults
 
@@ -275,6 +276,7 @@ async def default_config():
             "batch_size": 64,
             "epochs": 5,
             "patience": 0,
+            "schedule": None,
             "data_source": None,
             "target_col": None,
             "val_split": 0.2,
@@ -282,7 +284,7 @@ async def default_config():
         }
     return {"conv_channels": [32, 64], "fc_size": 128, "dropout": 0.3,
             "lr": 0.001, "batch_size": 64, "epochs": 5, "patience": 0,
-            "data_source": None, "target_col": None, "val_split": 0.2}
+            "schedule": None, "data_source": None, "target_col": None, "val_split": 0.2}
 
 
 def start():

@@ -1,8 +1,10 @@
 import copy
+import math
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.optim.lr_scheduler as lr_sched
 from torch.utils.data import DataLoader
 from typing import Dict, Any, Optional
 
@@ -63,9 +65,33 @@ class Trainer:
         self.optimizer = optim.Adam(model.parameters(), lr=config["lr"])
         self.criterion = nn.CrossEntropyLoss()
 
+    def _build_scheduler(self, epochs: int):
+        schedule = self.config.get("schedule") or "none"
+        schedule = schedule.strip().lower()
+        if schedule in ("", "none"):
+            return None
+        if schedule == "cosine":
+            return lr_sched.CosineAnnealingLR(
+                self.optimizer, T_max=epochs, eta_min=self.config["lr"] * 0.01
+            )
+        if schedule == "reduce_on_plateau":
+            return lr_sched.ReduceLROnPlateau(
+                self.optimizer, mode="min", patience=3, factor=0.5
+            )
+        if schedule == "warmup_cosine":
+            warmup = max(1, self.config.get("warmup_epochs", max(1, epochs // 10)))
+            def _lr_lambda(epoch):
+                if epoch < warmup:
+                    return (epoch + 1) / warmup
+                progress = (epoch - warmup) / max(1, epochs - warmup)
+                return 0.01 + 0.99 * 0.5 * (1 + math.cos(math.pi * progress))
+            return lr_sched.LambdaLR(self.optimizer, _lr_lambda)
+        raise ValueError(f"Unknown schedule '{schedule}'. Choose: cosine, reduce_on_plateau, warmup_cosine")
+
     def train(self, epochs: int = 5) -> Dict[str, list]:
         patience = self.config.get("patience", 0)
         early_stopping = EarlyStopping(patience=patience) if patience > 0 else None
+        scheduler = self._build_scheduler(epochs)
 
         metrics: Dict[str, Any] = {
             "train_loss": [], "train_acc": [],
@@ -111,12 +137,20 @@ class Trainer:
             metrics["val_loss"].append(val_loss)
             metrics["val_acc"].append(val_acc)
 
+            # Step the scheduler
+            if scheduler is not None:
+                if isinstance(scheduler, lr_sched.ReduceLROnPlateau):
+                    scheduler.step(val_loss)
+                else:
+                    scheduler.step()
+
             print(
                 f"  Epoch {epoch+1}/{epochs} | "
                 f"loss {metrics['train_loss'][-1]:.4f} | "
                 f"acc {metrics['train_acc'][-1]:.3f} | "
                 f"val_loss {val_loss:.4f} | "
-                f"val_acc {val_acc:.3f}"
+                f"val_acc {val_acc:.3f} | "
+                f"lr {self._current_lr():.2e}"
             )
 
             if early_stopping is not None:

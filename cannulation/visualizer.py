@@ -267,6 +267,31 @@ class Visualizer:
         })
         return self._make_chart("weight_distributions", "Weight Distributions", traces, layout)
 
+    def plot_lr_schedule(self, metrics: Dict[str, Any], run_id: str) -> Optional[Dict[str, Any]]:
+        """LR over epochs — only rendered when the schedule actually changes the LR."""
+        lr_trace = metrics.get("lr_trace", [])
+        if len(lr_trace) < 2 or len(set(lr_trace)) == 1:
+            return None  # Constant LR — not interesting to chart
+
+        epochs = list(range(1, len(lr_trace) + 1))
+        layout = self._base_layout(f"Run {run_id} - Learning Rate Schedule", height=300)
+        layout.update({
+            "xaxis": {"title": "Epoch", "dtick": 1, "gridcolor": "rgba(148, 163, 184, 0.18)"},
+            "yaxis": {"title": "Learning Rate", "type": "log", "gridcolor": "rgba(148, 163, 184, 0.18)"},
+            "showlegend": False,
+        })
+        data = [{
+            "type": "scatter",
+            "mode": "lines+markers",
+            "name": "LR",
+            "x": epochs,
+            "y": lr_trace,
+            "line": {"color": "#7c3aed", "width": 2.5},
+            "marker": {"size": 6},
+            "hovertemplate": "epoch=%{x}<br>lr=%{y:.2e}<extra></extra>",
+        }]
+        return self._make_chart("lr_schedule", "Learning Rate Schedule", data, layout)
+
     def plot_activation_percentiles(
         self, epoch_telemetry: List[Dict[str, Any]], run_id: str
     ) -> Optional[Dict[str, Any]]:
@@ -363,6 +388,7 @@ class Visualizer:
     def build_all(self, run_id: str, metrics: Dict[str, Any], model) -> List[Dict[str, Any]]:
         charts = [
             self.plot_training_curves(metrics, run_id),
+            self.plot_lr_schedule(metrics, run_id),
             self.plot_weight_distributions(model, run_id),
             self.plot_gradient_flow(metrics["epoch_telemetry"], run_id),
             self.plot_activation_health(metrics["epoch_telemetry"], run_id),

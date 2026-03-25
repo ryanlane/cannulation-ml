@@ -91,6 +91,17 @@
             style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
         </label>
 
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          LR Schedule
+          <select name="schedule"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+            <option value="" {% if not default_cfg.schedule %}selected{% endif %}>None (fixed LR)</option>
+            <option value="cosine" {% if default_cfg.schedule == 'cosine' %}selected{% endif %}>Cosine Annealing</option>
+            <option value="reduce_on_plateau" {% if default_cfg.schedule == 'reduce_on_plateau' %}selected{% endif %}>Reduce on Plateau</option>
+            <option value="warmup_cosine" {% if default_cfg.schedule == 'warmup_cosine' %}selected{% endif %}>Warmup + Cosine</option>
+          </select>
+        </label>
+
       </div>
 
       <div style="display:flex; align-items:center; gap:1.5rem;">
@@ -243,6 +254,7 @@
       val_split:     parseFloat(data.val_split),
       conv_channels: data.conv_channels.split(',').map(s => parseInt(s.trim())),
       patience:      parseInt(data.patience) || 0,
+      schedule:      data.schedule || null,
       iterate:       document.getElementById('iterate-cb').checked,
     };
 

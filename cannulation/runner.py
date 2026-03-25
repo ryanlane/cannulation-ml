@@ -25,6 +25,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "batch_size": 64,
     "epochs": 5,
     "patience": 0,
+    "schedule": None,
     "data_source": None,
     "target_col": None,
     "val_split": 0.2,
@@ -146,6 +147,9 @@ def main():
                         help="Override epochs per run")
     parser.add_argument("--patience", type=int, default=None,
                         help="Early stopping patience (0 = disabled)")
+    parser.add_argument("--schedule", default=None,
+                        choices=["cosine", "reduce_on_plateau", "warmup_cosine"],
+                        help="LR schedule to use during training")
     parser.add_argument("--data", dest="data_source", default=None,
                         help="Dataset source: CSV path, image folder path, HF dataset name, or 'mnist'")
     parser.add_argument("--target-col", default=None,
@@ -167,6 +171,8 @@ def main():
         config["epochs"] = args.epochs
     if args.patience is not None:
         config["patience"] = args.patience
+    if args.schedule is not None:
+        config["schedule"] = args.schedule
     if args.data_source is not None:
         config["data_source"] = args.data_source
     if args.target_col is not None:
