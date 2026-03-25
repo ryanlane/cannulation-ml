@@ -1,12 +1,12 @@
 import copy
 import math
+from typing import Dict, Any, List, Optional
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_sched
 from torch.utils.data import DataLoader
-from typing import Dict, Any, Optional
 
 from .datasets import DatasetInfo
 from .hooks import HookEngine
@@ -44,6 +44,94 @@ class EarlyStopping:
             model.load_state_dict(self.best_state)
 
 
+class AutoFix:
+    """
+    Watches for three training problems and corrects them in-flight:
+      1. Exploding gradients    → gradient clipping (batch-level)
+      2. Val loss plateau       → LR halving (epoch-level, only if no plateau scheduler)
+      3. Dead neuron worsening  → logged warning (epoch-level)
+    All applied interventions are logged to self.interventions.
+    """
+
+    GRAD_CLIP_THRESHOLD = 10.0   # grad norm above this → clip
+    GRAD_CLIP_MAX_NORM  = 1.0    # clip target
+    PLATEAU_PATIENCE    = 3      # epochs without improvement before LR cut
+    PLATEAU_FACTOR      = 0.5
+    PLATEAU_MIN_DELTA   = 1e-4
+    DEAD_NEURON_WARN    = 0.30   # fraction threshold to start watching
+    DEAD_NEURON_DELTA   = 0.10   # increase per epoch that triggers a warning
+
+    def __init__(self, optimizer: optim.Optimizer, has_plateau_scheduler: bool):
+        self.optimizer = optimizer
+        self.has_plateau_scheduler = has_plateau_scheduler
+        self.interventions: List[Dict[str, Any]] = []
+        self._plateau_counter = 0
+        self._best_val_loss = float("inf")
+        self._prev_dead: Dict[str, float] = {}
+
+    # ── batch-level ──────────────────────────────────────────────────────────
+
+    def check_gradients(self, model: nn.Module, epoch: int, batch: int) -> bool:
+        """Call after loss.backward(), before optimizer.step()."""
+        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf"))
+        total_norm = float(total_norm)
+        if total_norm > self.GRAD_CLIP_THRESHOLD:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), self.GRAD_CLIP_MAX_NORM)
+            entry = {
+                "epoch": epoch, "batch": batch,
+                "type": "gradient_clipping",
+                "detail": f"grad_norm={total_norm:.2f} clipped to {self.GRAD_CLIP_MAX_NORM}",
+            }
+            self.interventions.append(entry)
+            print(f"  [AutoFix] epoch {epoch} batch {batch}: {entry['detail']}")
+            return True
+        return False
+
+    # ── epoch-level ───────────────────────────────────────────────────────────
+
+    def check_plateau(self, val_loss: float, epoch: int) -> bool:
+        """Call after each epoch's validation step."""
+        if self.has_plateau_scheduler:
+            return False  # ReduceLROnPlateau already handles this
+
+        if val_loss < self._best_val_loss - self.PLATEAU_MIN_DELTA:
+            self._best_val_loss = val_loss
+            self._plateau_counter = 0
+            return False
+
+        self._plateau_counter += 1
+        if self._plateau_counter >= self.PLATEAU_PATIENCE:
+            old_lr = self.optimizer.param_groups[0]["lr"]
+            new_lr = old_lr * self.PLATEAU_FACTOR
+            for g in self.optimizer.param_groups:
+                g["lr"] = new_lr
+            self._plateau_counter = 0
+            entry = {
+                "epoch": epoch,
+                "type": "lr_reduction",
+                "detail": f"val_loss plateau → lr {old_lr:.2e} → {new_lr:.2e}",
+            }
+            self.interventions.append(entry)
+            print(f"  [AutoFix] epoch {epoch}: {entry['detail']}")
+            return True
+        return False
+
+    def check_dead_neurons(self, telemetry: Dict, epoch: int):
+        """Call after each epoch's hook snapshot."""
+        for layer, data in telemetry.items():
+            dead = data.get("activations", {}).get("dead_fraction", 0.0)
+            prev = self._prev_dead.get(layer, 0.0)
+            if dead >= self.DEAD_NEURON_WARN and dead >= prev + self.DEAD_NEURON_DELTA:
+                entry = {
+                    "epoch": epoch,
+                    "type": "dead_neuron_warning",
+                    "detail": f"{layer}: dead fraction {prev:.0%} → {dead:.0%} (worsening)",
+                }
+                self.interventions.append(entry)
+                print(f"  [AutoFix] epoch {epoch}: {entry['detail']}")
+            self._prev_dead[layer] = dead
+
+
 class Trainer:
     def __init__(
         self,
@@ -66,8 +154,7 @@ class Trainer:
         self.criterion = nn.CrossEntropyLoss()
 
     def _build_scheduler(self, epochs: int):
-        schedule = self.config.get("schedule") or "none"
-        schedule = schedule.strip().lower()
+        schedule = (self.config.get("schedule") or "none").strip().lower()
         if schedule in ("", "none"):
             return None
         if schedule == "cosine":
@@ -86,12 +173,19 @@ class Trainer:
                 progress = (epoch - warmup) / max(1, epochs - warmup)
                 return 0.01 + 0.99 * 0.5 * (1 + math.cos(math.pi * progress))
             return lr_sched.LambdaLR(self.optimizer, _lr_lambda)
-        raise ValueError(f"Unknown schedule '{schedule}'. Choose: cosine, reduce_on_plateau, warmup_cosine")
+        raise ValueError(
+            f"Unknown schedule '{schedule}'. Choose: cosine, reduce_on_plateau, warmup_cosine"
+        )
 
-    def train(self, epochs: int = 5) -> Dict[str, list]:
+    def train(self, epochs: int = 5) -> Dict[str, Any]:
         patience = self.config.get("patience", 0)
         early_stopping = EarlyStopping(patience=patience) if patience > 0 else None
         scheduler = self._build_scheduler(epochs)
+
+        has_plateau = isinstance(scheduler, lr_sched.ReduceLROnPlateau)
+        auto_fix: Optional[AutoFix] = None
+        if self.config.get("auto_fix", True):
+            auto_fix = AutoFix(self.optimizer, has_plateau_scheduler=has_plateau)
 
         metrics: Dict[str, Any] = {
             "train_loss": [], "train_acc": [],
@@ -99,6 +193,7 @@ class Trainer:
             "epoch_telemetry": [],
             "epoch_update_ratios": [],
             "lr_trace": [],
+            "interventions": [],
         }
 
         batches = list(self.train_loader)
@@ -117,7 +212,9 @@ class Trainer:
                 loss = self.criterion(outputs, labels)
                 loss.backward()
 
-                # Sample update-to-weight ratio from the last batch each epoch
+                if auto_fix is not None:
+                    auto_fix.check_gradients(self.model, epoch + 1, batch_idx + 1)
+
                 if batch_idx == len(batches) - 1:
                     epoch_update_ratios = self._sample_update_ratios()
 
@@ -127,9 +224,10 @@ class Trainer:
                 correct += (outputs.argmax(1) == labels).sum().item()
                 total += len(labels)
 
+            telemetry_snapshot = self.hooks.snapshot()
             metrics["train_loss"].append(total_loss / total)
             metrics["train_acc"].append(correct / total)
-            metrics["epoch_telemetry"].append(self.hooks.snapshot())
+            metrics["epoch_telemetry"].append(telemetry_snapshot)
             metrics["epoch_update_ratios"].append(epoch_update_ratios or {})
             metrics["lr_trace"].append(self._current_lr())
 
@@ -137,12 +235,15 @@ class Trainer:
             metrics["val_loss"].append(val_loss)
             metrics["val_acc"].append(val_acc)
 
-            # Step the scheduler
             if scheduler is not None:
                 if isinstance(scheduler, lr_sched.ReduceLROnPlateau):
                     scheduler.step(val_loss)
                 else:
                     scheduler.step()
+
+            if auto_fix is not None:
+                auto_fix.check_plateau(val_loss, epoch + 1)
+                auto_fix.check_dead_neurons(telemetry_snapshot, epoch + 1)
 
             print(
                 f"  Epoch {epoch+1}/{epochs} | "
@@ -155,30 +256,29 @@ class Trainer:
 
             if early_stopping is not None:
                 if early_stopping.step(val_loss, self.model, epoch + 1):
-                    print(f"  Early stopping at epoch {epoch+1} "
-                          f"(no improvement for {patience} epochs, "
-                          f"best val_loss={early_stopping.best_loss:.4f})")
+                    print(
+                        f"  Early stopping at epoch {epoch+1} "
+                        f"(no improvement for {patience} epochs, "
+                        f"best val_loss={early_stopping.best_loss:.4f})"
+                    )
                     early_stopping.restore(self.model)
                     metrics["stopped_early"] = True
                     metrics["best_epoch"] = epoch + 1 - patience
                     break
 
+        if auto_fix is not None:
+            metrics["interventions"] = auto_fix.interventions
+
         return metrics
 
     def _sample_update_ratios(self) -> Dict[str, float]:
-        """
-        Compute update-to-weight ratio (||ΔW|| / ||W||) for each trainable parameter.
-        Called before optimizer.step() with gradients already computed.
-        Uses lr * ||∇W|| / ||W|| as an approximation of the true update magnitude.
-        """
         ratios = {}
         lr = self._current_lr()
         for name, param in self.model.named_parameters():
             if param.requires_grad and param.grad is not None:
                 w_norm = param.data.norm().item()
                 if w_norm > 1e-10:
-                    approx_update = lr * param.grad.norm().item()
-                    ratios[name] = round(approx_update / w_norm, 6)
+                    ratios[name] = round(lr * param.grad.norm().item() / w_norm, 6)
         return ratios
 
     def _current_lr(self) -> float:

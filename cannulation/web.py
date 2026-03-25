@@ -72,6 +72,7 @@ class RunConfig(BaseModel):
     epochs: int = 5
     patience: int = 0
     schedule: Optional[str] = None
+    auto_fix: bool = True
     data_source: Optional[str] = None
     target_col: Optional[str] = None
     val_split: float = 0.2
@@ -172,6 +173,7 @@ async def run_detail(request: Request, run_id: str):
         "emb_metrics": data.get("embedding_metrics"),
         "efficiency": data.get("efficiency"),
         "evaluation": data.get("evaluation"),
+        "interventions": data.get("interventions", []),
     })
 
 

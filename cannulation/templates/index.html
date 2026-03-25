@@ -110,6 +110,11 @@
             style="width:14px; height:14px; cursor:pointer;">
           Use tuner's suggested config from last run
         </label>
+        <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.85rem; cursor:pointer;">
+          <input id="autofix-cb" type="checkbox" name="auto_fix" checked
+            style="width:14px; height:14px; cursor:pointer;">
+          Auto-fix (gradient clipping, LR reduction, dead neuron warnings)
+        </label>
         <button type="submit" id="submit-btn"
           style="font-size:0.85rem; background:var(--ok); color:#fff; border:none; border-radius:4px; padding:0.4rem 1.1rem; cursor:pointer; font-family:inherit;">
           ▶ Start Run
@@ -255,6 +260,7 @@
       conv_channels: data.conv_channels.split(',').map(s => parseInt(s.trim())),
       patience:      parseInt(data.patience) || 0,
       schedule:      data.schedule || null,
+      auto_fix:      document.getElementById('autofix-cb').checked,
       iterate:       document.getElementById('iterate-cb').checked,
     };
 
