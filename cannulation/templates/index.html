@@ -83,6 +83,14 @@
             style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
         </label>
 
+        <label style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted);">
+          Early Stopping Patience
+          <input name="patience" type="number" step="1" min="0" max="20"
+            value="{{ default_cfg.patience or 0 }}"
+            placeholder="0 = disabled"
+            style="font-family:inherit; font-size:0.9rem; padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; background:var(--bg);">
+        </label>
+
       </div>
 
       <div style="display:flex; align-items:center; gap:1.5rem;">
@@ -234,6 +242,7 @@
       target_col:    data.target_col.trim() || null,
       val_split:     parseFloat(data.val_split),
       conv_channels: data.conv_channels.split(',').map(s => parseInt(s.trim())),
+      patience:      parseInt(data.patience) || 0,
       iterate:       document.getElementById('iterate-cb').checked,
     };
 

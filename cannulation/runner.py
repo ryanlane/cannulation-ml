@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Dict, Any
 
 from .datasets import DatasetLoader
+from .efficiency import add_efficiency_ratios, measure_model
+from .evaluation import evaluate_model
 from .hooks import HookEngine
 from .model import build_model
 from .trainer import Trainer
@@ -22,6 +24,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "lr": 0.001,
     "batch_size": 64,
     "epochs": 5,
+    "patience": 0,
     "data_source": None,
     "target_col": None,
     "val_split": 0.2,
@@ -35,6 +38,8 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     print(f"  Run {run_id}")
     print(f"  lr={config['lr']:.6f}  dropout={config['dropout']:.2f}  "
           f"conv={config['conv_channels']}  fc={config['fc_size']}")
+    if config.get("patience", 0) > 0:
+        print(f"  early_stopping patience={config['patience']}")
     print(f"{'='*60}")
 
     dataset_loader = DatasetLoader()
@@ -50,6 +55,12 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     hooks = HookEngine(model)
     trainer = Trainer(model, config, hooks, train_loader, val_loader, dataset_info)
 
+    # Measure model size and FLOPs before training
+    print("\n  Measuring model efficiency...")
+    efficiency = measure_model(model, dataset_info)
+    print(f"  params={efficiency['total_params']:,}  size={efficiency['model_size_mb']}MB"
+          + (f"  flops={efficiency['flops_per_sample']:,}" if efficiency["flops_per_sample"] else ""))
+
     t0 = time.time()
     metrics = trainer.train(config["epochs"])
     elapsed = time.time() - t0
@@ -58,6 +69,10 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     tuner = Tuner(EXPERIMENTS_DIR)
     final_telemetry = metrics["epoch_telemetry"][-1]
     os.makedirs(EXPERIMENTS_DIR, exist_ok=True)
+
+    # Attach accuracy-per-compute ratios now that val_acc is known
+    val_acc = metrics["val_acc"][-1]
+    efficiency = add_efficiency_ratios(efficiency, val_acc)
 
     # Extract embeddings before analysis so metrics can inform findings
     raw_emb, raw_labels = trainer.get_embeddings()
@@ -74,6 +89,10 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
         except ValueError as exc:
             print(f"  Skipping embedding metrics: {exc}")
 
+    # Full evaluation: confusion matrix, per-class metrics, calibration
+    print("\n  Running evaluation...")
+    evaluation = evaluate_model(model, val_loader, dataset_info, trainer.device)
+
     findings = analyzer.analyze(metrics, final_telemetry, emb_metrics)
     next_config = tuner.suggest(findings, config)
 
@@ -89,7 +108,9 @@ def run_experiment(config: Dict[str, Any], run_id: str) -> Dict[str, Any]:
         "config": config,
         "dataset": dataset_info.to_dict(),
         "metrics": {k: v for k, v in metrics.items() if k != "epoch_telemetry"},
+        "efficiency": efficiency,
         "embedding_metrics": emb_metrics,
+        "evaluation": evaluation,
         "findings": [f.to_dict() for f in findings],
         "next_config": next_config,
         "elapsed_seconds": round(elapsed, 2),
@@ -123,6 +144,8 @@ def main():
                         help="How many sequential experiments to run")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Override epochs per run")
+    parser.add_argument("--patience", type=int, default=None,
+                        help="Early stopping patience (0 = disabled)")
     parser.add_argument("--data", dest="data_source", default=None,
                         help="Dataset source: CSV path, image folder path, HF dataset name, or 'mnist'")
     parser.add_argument("--target-col", default=None,
@@ -142,6 +165,8 @@ def main():
 
     if args.epochs is not None:
         config["epochs"] = args.epochs
+    if args.patience is not None:
+        config["patience"] = args.patience
     if args.data_source is not None:
         config["data_source"] = args.data_source
     if args.target_col is not None:

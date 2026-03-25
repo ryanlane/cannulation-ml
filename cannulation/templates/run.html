@@ -107,6 +107,105 @@
   </table>
 </div>
 
+<!-- Efficiency Metrics -->
+{% if efficiency %}
+<div class="card" style="margin-bottom:1rem;">
+  <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:1rem;">Model Efficiency</div>
+  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1rem;">
+
+    <div style="background:var(--bg); border-radius:6px; padding:0.9rem 1rem;">
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.25rem;">Parameters</div>
+      <div style="font-size:1.2rem; font-weight:700;">{{ "{:,}".format(efficiency.total_params) }}</div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.2rem;">{{ "{:,}".format(efficiency.trainable_params) }} trainable</div>
+    </div>
+
+    <div style="background:var(--bg); border-radius:6px; padding:0.9rem 1rem;">
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.25rem;">Model Size</div>
+      <div style="font-size:1.2rem; font-weight:700;">{{ efficiency.model_size_mb }} MB</div>
+    </div>
+
+    {% if efficiency.flops_per_sample %}
+    <div style="background:var(--bg); border-radius:6px; padding:0.9rem 1rem;">
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.25rem;">FLOPs / Sample</div>
+      <div style="font-size:1.2rem; font-weight:700;">
+        {% if efficiency.flops_per_sample >= 1000000000 %}
+          {{ "%.2f"|format(efficiency.flops_per_sample / 1e9) }}G
+        {% elif efficiency.flops_per_sample >= 1000000 %}
+          {{ "%.1f"|format(efficiency.flops_per_sample / 1e6) }}M
+        {% else %}
+          {{ "{:,}".format(efficiency.flops_per_sample) }}
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if efficiency.val_acc_per_million_params %}
+    <div style="background:var(--bg); border-radius:6px; padding:0.9rem 1rem;">
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.25rem;">Acc / M params</div>
+      <div style="font-size:1.2rem; font-weight:700;">{{ "%.3f"|format(efficiency.val_acc_per_million_params) }}</div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.2rem;">higher = more efficient</div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endif %}
+
+<!-- Error Analysis -->
+{% if evaluation and evaluation.confusion_matrix %}
+<div class="card" style="margin-bottom:1rem;">
+  <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:1rem;">Error Analysis</div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
+
+    <!-- Per-class metrics table -->
+    <div>
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.5rem;">Per-class Precision / Recall / F1</div>
+      <table>
+        <thead>
+          <tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th><th>Support</th></tr>
+        </thead>
+        <tbody>
+          {% for m in evaluation.per_class_metrics %}
+          <tr>
+            <td><strong>{{ m.name }}</strong></td>
+            <td>{{ "%.3f"|format(m.precision) }}</td>
+            <td>{{ "%.3f"|format(m.recall) }}</td>
+            <td style="color:{% if m.f1 >= 0.9 %}var(--ok){% elif m.f1 >= 0.7 %}var(--warning){% else %}var(--critical){% endif %};">
+              <strong>{{ "%.3f"|format(m.f1) }}</strong>
+            </td>
+            <td style="color:var(--muted);">{{ m.support }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Confusion heatmap + stats -->
+    <div>
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.5rem;">
+        Confusion Matrix
+        <span style="margin-left:0.75rem; color:var(--muted);">ECE: {{ "%.4f"|format(evaluation.ece) }}</span>
+      </div>
+      <div id="chart-confusion" style="width:100%; height:300px;"></div>
+
+      {% if evaluation.hardest_class_pairs %}
+      <div style="margin-top:0.75rem;">
+        <div style="font-size:0.72rem; color:var(--muted); margin-bottom:0.4rem;">Most confused pairs</div>
+        {% for pair in evaluation.hardest_class_pairs %}
+        <div style="font-size:0.8rem; display:flex; justify-content:space-between; padding:0.2rem 0; border-bottom:1px solid var(--border);">
+          <span>{{ pair.true }} → {{ pair.pred }}</span>
+          <span style="color:var(--critical);">{{ pair.count }}×</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+{% endif %}
+
 <!-- Embedding Quality Metrics -->
 {% if emb_metrics %}
 <div class="card" style="margin-bottom:1rem;">
@@ -267,7 +366,7 @@
 {% endblock %}
 
 {% block scripts %}
-{% if has_embeddings or charts %}
+{% if has_embeddings or charts or (evaluation and evaluation.confusion_matrix) %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <script>
 const RUN_ID = "{{ run.run_id }}";
@@ -412,6 +511,32 @@ function render(data, view) {
 renderStoredCharts();
 {% if has_embeddings %}
 fetchAndRender(3, 'scatter');
+{% endif %}
+
+{% if evaluation and evaluation.confusion_matrix %}
+(function renderConfusion() {
+  const cm = {{ evaluation.confusion_matrix|tojson }};
+  const n  = cm.length;
+  const labels = {{ evaluation.per_class_metrics|map(attribute='name')|list|tojson }};
+  // Plotly heatmap expects z[row][col]; we want true=y, pred=x
+  const trace = {
+    type: 'heatmap',
+    z: cm,
+    x: labels,
+    y: labels,
+    colorscale: 'Blues',
+    showscale: false,
+    hovertemplate: 'True: %{y}<br>Pred: %{x}<br>Count: %{z}<extra></extra>',
+  };
+  Plotly.react('chart-confusion', [trace], {
+    margin: { l:50, r:10, t:10, b:50 },
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: '#f8fafc',
+    font: { family: 'ui-monospace, monospace', size: 10 },
+    xaxis: { title: 'Predicted', tickvals: [...Array(n).keys()], ticktext: labels },
+    yaxis: { title: 'True', tickvals: [...Array(n).keys()], ticktext: labels, autorange: 'reversed' },
+  }, { responsive: true, displayModeBar: false });
+})();
 {% endif %}
 </script>
 {% endif %}

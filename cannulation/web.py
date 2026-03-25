@@ -70,6 +70,7 @@ class RunConfig(BaseModel):
     lr: float = 0.001
     batch_size: int = 64
     epochs: int = 5
+    patience: int = 0
     data_source: Optional[str] = None
     target_col: Optional[str] = None
     val_split: float = 0.2
@@ -119,7 +120,7 @@ async def index(request: Request):
     history = Tuner(EXPERIMENTS_DIR).load_history()
     defaults = {
         "conv_channels": [32, 64], "fc_size": 128, "dropout": 0.3,
-        "lr": 0.001, "batch_size": 64, "epochs": 5,
+        "lr": 0.001, "batch_size": 64, "epochs": 5, "patience": 0,
         "data_source": None, "target_col": None, "val_split": 0.2,
     }
     default_cfg = {**defaults, **history[-1]["next_config"]} if history else defaults
@@ -168,6 +169,8 @@ async def run_detail(request: Request, run_id: str):
         "has_embeddings": has_embeddings,
         "epoch_rows": epoch_rows,
         "emb_metrics": data.get("embedding_metrics"),
+        "efficiency": data.get("efficiency"),
+        "evaluation": data.get("evaluation"),
     })
 
 
@@ -189,6 +192,7 @@ async def start_run(config: RunConfig):
         if history:
             cfg = dict(history[-1]["next_config"])
             cfg["epochs"] = config.epochs  # honour explicit epoch override
+            cfg["patience"] = config.patience
             if config.data_source is not None:
                 cfg["data_source"] = config.data_source
             if config.target_col is not None:
@@ -270,13 +274,14 @@ async def default_config():
             "lr": 0.001,
             "batch_size": 64,
             "epochs": 5,
+            "patience": 0,
             "data_source": None,
             "target_col": None,
             "val_split": 0.2,
             **history[-1]["next_config"],
         }
     return {"conv_channels": [32, 64], "fc_size": 128, "dropout": 0.3,
-            "lr": 0.001, "batch_size": 64, "epochs": 5,
+            "lr": 0.001, "batch_size": 64, "epochs": 5, "patience": 0,
             "data_source": None, "target_col": None, "val_split": 0.2}
 
 

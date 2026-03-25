@@ -1,11 +1,45 @@
+import copy
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from .datasets import DatasetInfo
 from .hooks import HookEngine
+
+
+class EarlyStopping:
+    """
+    Stops training when val_loss hasn't improved for `patience` consecutive epochs.
+    Restores the best model weights on stop.
+    """
+
+    def __init__(self, patience: int = 5, min_delta: float = 1e-4):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_loss = float("inf")
+        self.counter = 0
+        self.best_state: Optional[dict] = None
+        self.stopped_epoch: Optional[int] = None
+
+    def step(self, val_loss: float, model: nn.Module, epoch: int) -> bool:
+        """Returns True if training should stop."""
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.best_state = copy.deepcopy(model.state_dict())
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.stopped_epoch = epoch
+                return True
+        return False
+
+    def restore(self, model: nn.Module):
+        if self.best_state is not None:
+            model.load_state_dict(self.best_state)
 
 
 class Trainer:
@@ -30,6 +64,9 @@ class Trainer:
         self.criterion = nn.CrossEntropyLoss()
 
     def train(self, epochs: int = 5) -> Dict[str, list]:
+        patience = self.config.get("patience", 0)
+        early_stopping = EarlyStopping(patience=patience) if patience > 0 else None
+
         metrics: Dict[str, list] = {
             "train_loss": [], "train_acc": [],
             "val_loss": [], "val_acc": [],
@@ -69,6 +106,18 @@ class Trainer:
                 f"val_loss {val_loss:.4f} | "
                 f"val_acc {val_acc:.3f}"
             )
+
+            if early_stopping is not None:
+                if early_stopping.step(val_loss, self.model, epoch + 1):
+                    print(f"  Early stopping at epoch {epoch+1} "
+                          f"(no improvement for {patience} epochs, "
+                          f"best val_loss={early_stopping.best_loss:.4f})")
+                    early_stopping.restore(self.model)
+                    metrics["stopped_early"] = True
+                    metrics["best_epoch"] = (
+                        epoch + 1 - patience
+                    )
+                    break
 
         return metrics
 
